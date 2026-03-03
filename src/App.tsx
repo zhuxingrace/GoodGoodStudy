@@ -269,6 +269,7 @@ export default function App() {
   );
   const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
   const skipNextCloudPersistRef = useRef(false);
+  const skipNextLocalPersistRef = useRef(false);
 
   const fileStorageSupported = supportsFileStorage();
   const canUseCloudSync = Boolean(isSupabaseConfigured && authSession);
@@ -443,7 +444,12 @@ export default function App() {
   }, [authSession, isAuthReady, isCloudMode]);
 
   useEffect(() => {
-    if (!isReady || isCloudMode || isCloudLoading) {
+    if (!isReady || (isSupabaseConfigured && dataSyncMode === 'cloud') || isCloudLoading) {
+      return;
+    }
+
+    if (skipNextLocalPersistRef.current) {
+      skipNextLocalPersistRef.current = false;
       return;
     }
 
@@ -486,7 +492,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [entries, fileHandle, isCloudLoading, isCloudMode, isReady, journalEntries, storageMode]);
+  }, [dataSyncMode, entries, fileHandle, isCloudLoading, isReady, journalEntries, storageMode]);
 
   useEffect(() => {
     if (!isReady || !isCloudMode || !authSession || isCloudLoading) {
@@ -788,6 +794,10 @@ export default function App() {
   };
 
   const handleCloudModeChange = (enabled: boolean) => {
+    if (!enabled) {
+      skipNextLocalPersistRef.current = true;
+    }
+
     setDataSyncMode(enabled ? 'cloud' : 'local');
     setStorageStatus(
       enabled
@@ -796,6 +806,42 @@ export default function App() {
           ? 'Cloud sync disabled. Local file mode is active.'
           : 'Cloud sync disabled. Using browser localStorage.',
     );
+
+    if (!enabled) {
+      void (async () => {
+        let nextEntries = loadEntries();
+        let nextJournalEntries = loadJournalEntries();
+        let nextTimeSessions = loadTimeSessions();
+        let nextStatus =
+          storageMode === 'file'
+            ? 'Cloud sync disabled. Local file mode is active.'
+            : 'Cloud sync disabled. Using browser localStorage.';
+
+        if (storageMode === 'file' && fileHandle) {
+          try {
+            const fileData = await readAppDataFromFile(fileHandle);
+
+            if (fileData) {
+              nextEntries = fileData.entries;
+              nextJournalEntries = fileData.journalEntries;
+              nextStatus = 'Cloud sync disabled. Restored data from your connected local JSON file.';
+            } else {
+              nextStatus = 'Cloud sync disabled. Connected file is empty, so browser local data remains active.';
+            }
+          } catch (error) {
+            nextStatus =
+              error instanceof Error
+                ? `${error.message} Falling back to browser local data.`
+                : 'Unable to read the connected file. Falling back to browser local data.';
+          }
+        }
+
+        setEntries(nextEntries);
+        setJournalEntries(nextJournalEntries);
+        setTimeSessions(nextTimeSessions);
+        setStorageStatus(nextStatus);
+      })();
+    }
   };
 
   const importLocalDataToCloud = () => {
