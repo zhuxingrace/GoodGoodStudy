@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  Autocomplete,
   Badge,
   Button,
   Card,
@@ -84,8 +85,7 @@ export default function QuickAddCard({
     setDraft((current) => insertTemplateIntoEntry(current));
   };
 
-  const canSubmit =
-    draft.title.trim().length > 0 && (draft.type !== 'InterviewPrep' || draft.company.trim().length > 0);
+  const canSubmit = draft.title.trim().length > 0;
 
   const submitDraft = () => {
     if (!canSubmit) {
@@ -277,16 +277,12 @@ export default function QuickAddCard({
               { maxWidth: 'sm', cols: 1, spacing: 'sm' },
             ]}
           >
-            <Select
-              label="Company"
+            <Autocomplete
+              label="Company (optional)"
               placeholder="Airbnb"
-              searchable
-              creatable
               data={companies}
-              value={draft.company || null}
-              getCreateLabel={(query) => `+ Create ${query}`}
-              onChange={(value) => updateInterviewPrep({ company: value ?? '' })}
-              onCreate={(query) => query}
+              value={draft.company}
+              onChange={(value) => updateInterviewPrep({ company: value })}
             />
             <Select
               label="Round type"

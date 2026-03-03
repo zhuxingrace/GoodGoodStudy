@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Autocomplete,
   Badge,
   Button,
   Card,
@@ -90,10 +91,6 @@ export default function EntryDrawer({
     }
 
     if (!draft.title.trim()) {
-      return false;
-    }
-
-    if (draft.type === 'InterviewPrep' && !draft.company.trim()) {
       return false;
     }
 
@@ -429,15 +426,11 @@ export default function EntryDrawer({
 
                 {draft.type === 'InterviewPrep' ? (
                   <>
-                    <Select
-                      label="Company"
-                      searchable
-                      creatable
+                    <Autocomplete
+                      label="Company (optional)"
                       data={companies}
-                      value={draft.company || null}
-                      getCreateLabel={(query) => `+ Create ${query}`}
-                      onChange={(value) => updateInterviewPrep({ company: value ?? '' })}
-                      onCreate={(query) => query}
+                      value={draft.company}
+                      onChange={(value) => updateInterviewPrep({ company: value })}
                     />
                     <Select
                       label="Round Type"
