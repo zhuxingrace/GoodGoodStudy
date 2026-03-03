@@ -5,18 +5,49 @@ import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { Node, mergeAttributes } from '@tiptap/core';
-import { common, createLowlight } from 'lowlight';
-import type { EntryAttachment, RichContentJson } from '../types';
+import { createLowlight } from 'lowlight';
+import bash from 'highlight.js/lib/languages/bash';
+import cpp from 'highlight.js/lib/languages/cpp';
+import go from 'highlight.js/lib/languages/go';
+import java from 'highlight.js/lib/languages/java';
+import javascript from 'highlight.js/lib/languages/javascript';
+import json from 'highlight.js/lib/languages/json';
+import plaintext from 'highlight.js/lib/languages/plaintext';
+import python from 'highlight.js/lib/languages/python';
+import sql from 'highlight.js/lib/languages/sql';
+import typescript from 'highlight.js/lib/languages/typescript';
+import yaml from 'highlight.js/lib/languages/yaml';
+import type { CodeLanguage, EntryAttachment, RichContentJson } from '../types';
 import { CODE_LANGUAGE_OPTIONS } from '../types';
 import { createEmptyRichDoc } from '../lib/studyData';
 import { createUuid } from '../lib/id';
 import { getSignedStudyUrl, STUDY_UPLOAD_BUCKET, uploadStudyAsset } from '../lib/storageAssets';
 
-const lowlight = createLowlight(common);
+const lowlight = createLowlight();
 
-const RICH_CODE_LANGUAGE_OPTIONS = CODE_LANGUAGE_OPTIONS.filter((item) => item.value !== 'plaintext').map((item) =>
-  item.value === 'other' ? { ...item, label: 'Other' } : item,
-);
+lowlight.register({
+  bash,
+  cpp,
+  go,
+  java,
+  javascript,
+  json,
+  plaintext,
+  python,
+  sql,
+  typescript,
+  yaml,
+});
+lowlight.registerAlias({
+  cpp: 'c++',
+  javascript: 'js',
+  typescript: 'ts',
+  plaintext: ['text', 'plain', 'other'],
+});
+
+const RICH_CODE_LANGUAGE_OPTIONS = CODE_LANGUAGE_OPTIONS.filter((item) => item.value !== 'other');
+const RICH_CODE_LANGUAGE_STORAGE_KEY = 'study-tracker.rich-code-language.v1';
+const DEFAULT_RICH_CODE_LANGUAGE: CodeLanguage = 'plaintext';
 
 type RichEntryEditorType = 'InterviewPrep' | 'SystemDesign';
 
@@ -536,6 +567,21 @@ const stripTransientEditorState = (value: unknown): RichContentJson => {
 
 const isDiagramSourceFile = (file: File) => /\.excalidraw$/i.test(file.name);
 
+const getStoredRichCodeLanguage = (): CodeLanguage => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_RICH_CODE_LANGUAGE;
+  }
+
+  const stored = window.localStorage.getItem(RICH_CODE_LANGUAGE_STORAGE_KEY);
+  const matched = RICH_CODE_LANGUAGE_OPTIONS.find((item) => item.value === stored);
+  return matched?.value ?? DEFAULT_RICH_CODE_LANGUAGE;
+};
+
+const normalizeRichCodeLanguage = (language: string | null | undefined): CodeLanguage => {
+  const matched = RICH_CODE_LANGUAGE_OPTIONS.find((item) => item.value === language);
+  return matched?.value ?? DEFAULT_RICH_CODE_LANGUAGE;
+};
+
 export default function InterviewPrepEditor({
   entryId,
   entryType,
@@ -553,6 +599,7 @@ export default function InterviewPrepEditor({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [pendingDiagramPreviewNodeId, setPendingDiagramPreviewNodeId] = useState<string | null>(null);
+  const [preferredCodeLanguage, setPreferredCodeLanguage] = useState<CodeLanguage>(() => getStoredRichCodeLanguage());
 
   const initialContent = useMemo(() => value ?? createEmptyRichDoc(), [value]);
 
@@ -574,7 +621,11 @@ export default function InterviewPrepEditor({
       }),
       CodeBlockLowlight.configure({
         lowlight,
-        defaultLanguage: 'other',
+        defaultLanguage: DEFAULT_RICH_CODE_LANGUAGE,
+        languageClassPrefix: 'language-',
+        HTMLAttributes: {
+          class: 'interview-code-block',
+        },
       }),
       PrivateImageNode,
       AttachmentNode,
@@ -743,17 +794,24 @@ export default function InterviewPrepEditor({
     insertAtCursor(SYSTEM_DESIGN_TEMPLATE_NODES);
   };
 
-  const currentCodeLanguage = editor?.isActive('codeBlock')
-    ? (() => {
-        const activeLanguage = String(editor.getAttributes('codeBlock').language || 'other');
-        return activeLanguage === 'plaintext' ? 'other' : activeLanguage;
-      })()
-    : 'other';
+  const persistPreferredCodeLanguage = (language: CodeLanguage) => {
+    setPreferredCodeLanguage(language);
 
-  const insertOrUpdateCodeBlock = (language: string) => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(RICH_CODE_LANGUAGE_STORAGE_KEY, language);
+    }
+  };
+
+  const activeCodeLanguage = editor?.isActive('codeBlock')
+    ? normalizeRichCodeLanguage(String(editor.getAttributes('codeBlock').language || DEFAULT_RICH_CODE_LANGUAGE))
+    : null;
+
+  const insertOrUpdateCodeBlock = (language: CodeLanguage) => {
     if (!editor) {
       return;
     }
+
+    persistPreferredCodeLanguage(language);
 
     if (editor.isActive('codeBlock')) {
       editor.chain().focus().updateAttributes('codeBlock', { language }).run();
@@ -769,6 +827,15 @@ export default function InterviewPrepEditor({
         content: [{ type: 'text', text: '' }],
       })
       .run();
+  };
+
+  const updateActiveCodeBlockLanguage = (language: CodeLanguage) => {
+    if (!editor) {
+      return;
+    }
+
+    persistPreferredCodeLanguage(language);
+    editor.chain().focus().updateAttributes('codeBlock', { language }).run();
   };
 
   const insertUploadedNode = async (file: File, kind: 'image' | 'attachment') => {
@@ -955,13 +1022,9 @@ export default function InterviewPrepEditor({
             <Button size="xs" variant="light" onClick={insertOrderedList}>
               Numbered list
             </Button>
-            <Select
-              size="xs"
-              style={{ width: 160 }}
-              data={RICH_CODE_LANGUAGE_OPTIONS}
-              value={currentCodeLanguage}
-              onChange={(value) => insertOrUpdateCodeBlock(value ?? 'other')}
-            />
+            <Button size="xs" variant="light" onClick={() => insertOrUpdateCodeBlock(preferredCodeLanguage)}>
+              Code block
+            </Button>
             <Button
               size="xs"
               variant="light"
@@ -1008,7 +1071,7 @@ export default function InterviewPrepEditor({
                 <Menu.Item onClick={insertHeading}>Heading</Menu.Item>
                 <Menu.Item onClick={insertBulletList}>Bullet list</Menu.Item>
                 <Menu.Item onClick={insertOrderedList}>Numbered list</Menu.Item>
-                <Menu.Item onClick={() => insertOrUpdateCodeBlock(currentCodeLanguage)}>Code block</Menu.Item>
+                <Menu.Item onClick={() => insertOrUpdateCodeBlock(preferredCodeLanguage)}>Code block</Menu.Item>
                 <Menu.Item onClick={() => imageInputRef.current?.click()} disabled={!userId}>
                   Image
                 </Menu.Item>
@@ -1025,6 +1088,27 @@ export default function InterviewPrepEditor({
               </Menu.Dropdown>
             </Menu>
           </Group>
+          {activeCodeLanguage ? (
+            <Group spacing="sm" align="center">
+              <Text size="sm" fw={600}>
+                Code block language
+              </Text>
+              <Select
+                size="xs"
+                style={{ width: 180 }}
+                data={RICH_CODE_LANGUAGE_OPTIONS}
+                value={activeCodeLanguage}
+                onChange={(value) => updateActiveCodeBlockLanguage((value ?? DEFAULT_RICH_CODE_LANGUAGE) as CodeLanguage)}
+              />
+              <Text size="xs" c="dimmed">
+                Syntax highlighting updates immediately.
+              </Text>
+            </Group>
+          ) : (
+            <Text size="xs" c="dimmed">
+              New code blocks default to {RICH_CODE_LANGUAGE_OPTIONS.find((item) => item.value === preferredCodeLanguage)?.label ?? 'Plain text'}.
+            </Text>
+          )}
         </Stack>
       </Card>
 

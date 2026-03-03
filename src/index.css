@@ -420,11 +420,72 @@ body {
 
 .interview-tiptap .tiptap pre {
   margin: 0;
-  padding: 0.9rem 1rem;
+  padding: 0.95rem 1rem;
   border-radius: 0.9rem;
   border: 1px solid var(--app-border);
-  background: rgba(248, 250, 252, 0.95);
+  background: rgba(244, 247, 246, 0.96);
   overflow-x: auto;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.interview-tiptap .tiptap pre code {
+  display: block;
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    'Courier New',
+    monospace;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: #1f2937;
+  white-space: pre;
+}
+
+.interview-tiptap .tiptap pre code .hljs-comment,
+.interview-tiptap .tiptap pre code .hljs-quote {
+  color: #7b8798;
+  font-style: italic;
+}
+
+.interview-tiptap .tiptap pre code .hljs-keyword,
+.interview-tiptap .tiptap pre code .hljs-selector-tag,
+.interview-tiptap .tiptap pre code .hljs-literal,
+.interview-tiptap .tiptap pre code .hljs-section,
+.interview-tiptap .tiptap pre code .hljs-link {
+  color: #5b7db1;
+  font-weight: 600;
+}
+
+.interview-tiptap .tiptap pre code .hljs-string,
+.interview-tiptap .tiptap pre code .hljs-attr,
+.interview-tiptap .tiptap pre code .hljs-doctag,
+.interview-tiptap .tiptap pre code .hljs-template-tag {
+  color: #2f936f;
+}
+
+.interview-tiptap .tiptap pre code .hljs-title,
+.interview-tiptap .tiptap pre code .hljs-function,
+.interview-tiptap .tiptap pre code .hljs-built_in,
+.interview-tiptap .tiptap pre code .hljs-type,
+.interview-tiptap .tiptap pre code .hljs-class {
+  color: #875f8f;
+}
+
+.interview-tiptap .tiptap pre code .hljs-number,
+.interview-tiptap .tiptap pre code .hljs-symbol,
+.interview-tiptap .tiptap pre code .hljs-bullet {
+  color: #c17c44;
+}
+
+.interview-tiptap .tiptap pre code .hljs-variable,
+.interview-tiptap .tiptap pre code .hljs-params,
+.interview-tiptap .tiptap pre code .hljs-property {
+  color: #4b5563;
 }
 
 .interview-tiptap .tiptap hr {
