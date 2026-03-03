@@ -1,3 +1,7 @@
+-- Shared rich-editor storage for InterviewPrep and SystemDesign entries.
+-- Upload paths must start with: <auth.uid()>/<entryId>/...
+-- Subfolders are allowed under the entry prefix (for example: <uid>/<entryId>/diagrams/...).
+
 alter table public.entries
   add column if not exists content_json jsonb,
   add column if not exists attachments jsonb;

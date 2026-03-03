@@ -3,7 +3,20 @@ export const DIFFICULTIES = ['Easy', 'Medium', 'Hard'] as const;
 export const ROUND_TYPES = ['Coding', 'SystemDesign', 'Behavioral', 'Mock'] as const;
 export const JOURNAL_MOODS = ['😌', '🎯', '😊', '😴', '😵'] as const;
 export const BLOCK_TYPES = ['text', 'code', 'followup'] as const;
-export const CODE_LANGUAGES = ['java', 'python', 'cpp', 'javascript', 'typescript', 'go', 'sql', 'plaintext'] as const;
+export const CODE_LANGUAGES = [
+  'java',
+  'python',
+  'cpp',
+  'javascript',
+  'typescript',
+  'go',
+  'sql',
+  'bash',
+  'yaml',
+  'json',
+  'other',
+  'plaintext',
+] as const;
 
 export type EntryType = (typeof ENTRY_TYPES)[number];
 export type Difficulty = (typeof DIFFICULTIES)[number];
@@ -21,6 +34,10 @@ export const CODE_LANGUAGE_OPTIONS: Array<{ value: CodeLanguage; label: string }
   { value: 'typescript', label: 'TypeScript' },
   { value: 'go', label: 'Go' },
   { value: 'sql', label: 'SQL' },
+  { value: 'bash', label: 'Bash' },
+  { value: 'yaml', label: 'YAML' },
+  { value: 'json', label: 'JSON' },
+  { value: 'other', label: 'Other' },
   { value: 'plaintext', label: 'Plain text' },
 ];
 
@@ -40,6 +57,10 @@ export const CODE_LANGUAGE_LABELS: Record<CodeLanguage, string> = {
   typescript: 'TypeScript',
   go: 'Go',
   sql: 'SQL',
+  bash: 'Bash',
+  yaml: 'YAML',
+  json: 'JSON',
+  other: 'Other',
   plaintext: 'Plain text',
 };
 
@@ -104,6 +125,8 @@ export interface SystemDesignEntry extends EntryBase {
   needReview?: boolean;
   nextReviewDate?: string;
   templateMode?: boolean;
+  contentJson?: RichContentJson | null;
+  attachments?: EntryAttachment[];
 }
 
 export interface InterviewPrepEntry extends EntryBase {

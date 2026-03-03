@@ -198,7 +198,7 @@ const normalizeCodeLanguage = (value: unknown, fallback: CodeLanguage = 'java'):
     normalized === 'text' ||
     normalized === 'txt'
   ) {
-    return 'plaintext';
+    return normalized === 'other' ? 'other' : 'plaintext';
   }
 
   return 'plaintext';
@@ -247,6 +247,27 @@ const createParagraphNode = (text: string) => ({
         },
       ]
     : undefined,
+});
+
+const createHeadingNode = (text: string, level = 2) => ({
+  type: 'heading',
+  attrs: { level },
+  content: text
+    ? [
+        {
+          type: 'text',
+          text,
+        },
+      ]
+    : undefined,
+});
+
+const createBulletListNode = (items: string[] = ['']) => ({
+  type: 'bulletList',
+  content: items.map((item) => ({
+    type: 'listItem',
+    content: [createParagraphNode(item)],
+  })),
 });
 
 const createCodeBlockNode = (language: string | undefined, code: string) => ({
@@ -301,6 +322,24 @@ export const migrateInterviewPrepBlocksToContentJson = (
     content: content.length > 0 ? content : createEmptyRichDoc().content,
   };
 };
+
+const createSystemDesignTemplateNodes = () =>
+  [
+    { heading: 'Goal / Prompt', bullets: ['Primary use case', 'Success definition'] },
+    { heading: 'Functional requirements', bullets: ['Must-have capabilities', 'Key user journeys'] },
+    {
+      heading: 'Non-functional (QPS / latency / availability / consistency)',
+      bullets: ['Peak traffic assumptions', 'SLOs and trade-offs'],
+    },
+    { heading: 'API sketch', bullets: ['Core endpoints', 'Important request / response shapes'] },
+    { heading: 'High-level architecture', bullets: ['Main services', 'Data flow between components'] },
+    { heading: 'Data model', bullets: ['Primary entities', 'Storage choices'] },
+    { heading: 'Core flows', bullets: ['Read path', 'Write path'] },
+    { heading: 'Trade-offs', bullets: ['Why this design', 'What you are deliberately not optimizing'] },
+    { heading: 'Failure modes & mitigations', bullets: ['Bottlenecks', 'Fallbacks and recovery'] },
+    { heading: 'Metrics / observability', bullets: ['Golden signals', 'Alerts and dashboards'] },
+    { heading: 'Follow-ups', bullets: ['Scale-up ideas', 'Alternative designs'] },
+  ].flatMap((section) => [createHeadingNode(section.heading), createBulletListNode(section.bullets)]);
 
 export const todayISO = (date = new Date()) => {
   const year = date.getFullYear();
@@ -400,6 +439,8 @@ export const createEmptyEntry = (type: EntryType, dateISO = todayISO()): StudyEn
       tags: [],
       templateMode: false,
       needReview: false,
+      contentJson: createEmptyRichDoc(),
+      attachments: [],
     };
   }
 
@@ -541,6 +582,11 @@ const normalizeEntry = (value: unknown): StudyEntry | null => {
       needReview: typeof value.needReview === 'boolean' ? value.needReview : undefined,
       nextReviewDate: trimString(value.nextReviewDate),
       templateMode: typeof value.templateMode === 'boolean' ? value.templateMode : undefined,
+      contentJson:
+        isObject(value.contentJson) || isObject(value.content_json)
+          ? ((value.contentJson ?? value.content_json) as RichContentJson)
+          : migrateInterviewPrepBlocksToContentJson(base.blocks),
+      attachments: sanitizeEntryAttachments(value.attachments),
     };
     return entry;
   }
@@ -620,6 +666,8 @@ export const seedEntries = (): StudyEntry[] => {
       nextReviewDate: addDaysISO(today, 14),
       templateMode: true,
       blocks: [createTextBlock(SYSTEM_DESIGN_TEMPLATE)],
+      contentJson: appendTemplateToRichDoc(createEmptyRichDoc(), SYSTEM_DESIGN_TEMPLATE),
+      attachments: [],
     },
     {
       id: createId(),
@@ -637,6 +685,13 @@ export const seedEntries = (): StudyEntry[] => {
         createFollowUpBlock('How would you handle stale reads?', 'Version keys and async refresh workers.'),
         createFollowUpBlock('What breaks first at higher QPS?', 'Write amplification and fan-out on invalidation.'),
       ],
+      contentJson: migrateInterviewPrepBlocksToContentJson([
+        createTextBlock(INTERVIEW_CODING_TEMPLATE),
+        createCodeBlock('python', '# pseudo\n# cache invalidation checkpoints'),
+        createFollowUpBlock('How would you handle stale reads?', 'Version keys and async refresh workers.'),
+        createFollowUpBlock('What breaks first at higher QPS?', 'Write amplification and fan-out on invalidation.'),
+      ]),
+      attachments: [],
     },
     {
       id: createId(),
@@ -670,6 +725,12 @@ export const seedEntries = (): StudyEntry[] => {
         createCodeBlock('plaintext', ''),
         createFollowUpBlock('', ''),
       ],
+      contentJson: migrateInterviewPrepBlocksToContentJson([
+        createTextBlock('Refined STAR stories for conflict and leadership questions.'),
+        createCodeBlock('plaintext', ''),
+        createFollowUpBlock('', ''),
+      ]),
+      attachments: [],
     },
   ];
 };
@@ -939,6 +1000,20 @@ const appendTemplateToRichDoc = (contentJson: RichContentJson | null | undefined
   };
 };
 
+const appendNodesToRichDoc = (
+  contentJson: RichContentJson | null | undefined,
+  nodes: Array<Record<string, unknown>>,
+): RichContentJson => {
+  const baseDoc = contentJson && typeof contentJson === 'object' ? structuredClone(contentJson) : createEmptyRichDoc();
+  const nextContent = Array.isArray(baseDoc.content) ? [...baseDoc.content] : [];
+
+  return {
+    ...baseDoc,
+    type: 'doc',
+    content: [...nextContent, ...structuredClone(nodes)],
+  };
+};
+
 const getRichDocSearchText = (contentJson: unknown): string => {
   const parts: string[] = [];
 
@@ -979,6 +1054,13 @@ const getRichDocSearchText = (contentJson: unknown): string => {
 
 export const insertTemplateIntoEntry = (entry: StudyEntry): StudyEntry => {
   const template = entry.type === 'SystemDesign' ? SYSTEM_DESIGN_TEMPLATE : INTERVIEW_CODING_TEMPLATE;
+
+  if (entry.type === 'SystemDesign') {
+    return {
+      ...entry,
+      contentJson: appendNodesToRichDoc(entry.contentJson, createSystemDesignTemplateNodes()),
+    };
+  }
 
   if (entry.type === 'InterviewPrep') {
     return {
@@ -1033,6 +1115,10 @@ export const entryMatchesSearch = (entry: StudyEntry, query: string) => {
 
   if (entry.type === 'InterviewPrep') {
     searchParts.push(entry.company, entry.roundType, getRichDocSearchText(entry.contentJson));
+  }
+
+  if (entry.type === 'SystemDesign') {
+    searchParts.push(getRichDocSearchText(entry.contentJson));
   }
 
   if (entry.type === 'LeetCode') {

@@ -7,21 +7,18 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import { Node, mergeAttributes } from '@tiptap/core';
 import { common, createLowlight } from 'lowlight';
 import type { EntryAttachment, RichContentJson } from '../types';
+import { CODE_LANGUAGE_OPTIONS } from '../types';
 import { createEmptyRichDoc } from '../lib/studyData';
+import { createUuid } from '../lib/id';
 import { getSignedStudyUrl, STUDY_UPLOAD_BUCKET, uploadStudyAsset } from '../lib/storageAssets';
 
 const lowlight = createLowlight(common);
 
-const CODE_LANGUAGE_OPTIONS = [
-  { value: 'java', label: 'Java' },
-  { value: 'python', label: 'Python' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'cpp', label: 'C++' },
-  { value: 'go', label: 'Go' },
-  { value: 'sql', label: 'SQL' },
-  { value: 'other', label: 'Other' },
-];
+const RICH_CODE_LANGUAGE_OPTIONS = CODE_LANGUAGE_OPTIONS.filter((item) => item.value !== 'plaintext').map((item) =>
+  item.value === 'other' ? { ...item, label: 'Other' } : item,
+);
+
+type RichEntryEditorType = 'InterviewPrep' | 'SystemDesign';
 
 type AssetNodeAttrs = {
   id: string;
@@ -35,8 +32,32 @@ type AssetNodeAttrs = {
   signedUrl?: string | null;
 };
 
+type DiagramNodeAttrs = {
+  id: string;
+  bucket: string;
+  sourcePath: string;
+  sourceName: string;
+  sourceMime?: string;
+  sourceSize?: number;
+  sourceCreatedAt?: string;
+  sourceSignedUrl?: string | null;
+  previewPath?: string;
+  previewName?: string;
+  previewMime?: string;
+  previewSize?: number;
+  previewCreatedAt?: string;
+  previewSignedUrl?: string | null;
+};
+
+type SignablePathRef = {
+  nodeType: 'privateImage' | 'privateAttachment' | 'privateDiagram';
+  path: string;
+  urlAttr: 'signedUrl' | 'sourceSignedUrl' | 'previewSignedUrl';
+};
+
 interface InterviewPrepEditorProps {
   entryId: string;
+  entryType: RichEntryEditorType;
   userId?: string;
   value?: RichContentJson | null;
   attachments?: EntryAttachment[];
@@ -58,6 +79,47 @@ const formatFileSize = (size?: number) => {
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+const createTextNode = (text: string) => ({
+  type: 'text',
+  text,
+});
+
+const createParagraphNode = (text = '') => ({
+  type: 'paragraph',
+  content: text ? [createTextNode(text)] : undefined,
+});
+
+const createHeadingNode = (text: string, level = 2) => ({
+  type: 'heading',
+  attrs: { level },
+  content: text ? [createTextNode(text)] : undefined,
+});
+
+const createBulletListNode = (items: string[] = ['']) => ({
+  type: 'bulletList',
+  content: items.map((item) => ({
+    type: 'listItem',
+    content: [createParagraphNode(item)],
+  })),
+});
+
+const SYSTEM_DESIGN_TEMPLATE_NODES = [
+  { heading: 'Goal / Prompt', bullets: ['Primary use case', 'Success definition'] },
+  { heading: 'Functional requirements', bullets: ['Must-have capabilities', 'Key user journeys'] },
+  {
+    heading: 'Non-functional (QPS / latency / availability / consistency)',
+    bullets: ['Peak traffic assumptions', 'SLOs and trade-offs'],
+  },
+  { heading: 'API sketch', bullets: ['Core endpoints', 'Important request / response shapes'] },
+  { heading: 'High-level architecture', bullets: ['Main services', 'Data flow between components'] },
+  { heading: 'Data model', bullets: ['Primary entities', 'Storage choices'] },
+  { heading: 'Core flows', bullets: ['Read path', 'Write path'] },
+  { heading: 'Trade-offs', bullets: ['Why this design', 'What you are deliberately not optimizing'] },
+  { heading: 'Failure modes & mitigations', bullets: ['Bottlenecks', 'Fallbacks and recovery'] },
+  { heading: 'Metrics / observability', bullets: ['Golden signals', 'Alerts and dashboards'] },
+  { heading: 'Follow-ups', bullets: ['Scale-up ideas', 'Alternative designs'] },
+].flatMap((section) => [createHeadingNode(section.heading), createBulletListNode(section.bullets)]);
 
 const ImageNodeView = ({ node, selected }: any) => {
   const attrs = node.attrs as AssetNodeAttrs;
@@ -108,6 +170,59 @@ const AttachmentNodeView = ({ node, selected }: any) => {
   );
 };
 
+const DiagramNodeView = ({ node, selected }: any) => {
+  const attrs = node.attrs as DiagramNodeAttrs;
+
+  return (
+    <NodeViewWrapper
+      as="div"
+      className="interview-asset-block interview-diagram-block"
+      data-selected={selected ? 'true' : 'false'}
+      contentEditable={false}
+    >
+      {attrs.previewSignedUrl ? (
+        <img
+          src={attrs.previewSignedUrl}
+          alt={attrs.previewName || `${attrs.sourceName} preview`}
+          className="interview-image"
+        />
+      ) : (
+        <div className="interview-image-placeholder">Excalidraw source attached (no preview yet)</div>
+      )}
+      <div className="interview-diagram-meta">
+        <div>
+          <Text fw={600}>Excalidraw diagram</Text>
+          <Text size="sm" c="dimmed">
+            {attrs.sourceName}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {formatFileSize(attrs.sourceSize)}
+          </Text>
+        </div>
+        <Group spacing="xs">
+          {attrs.sourceSignedUrl ? (
+            <a
+              href={attrs.sourceSignedUrl}
+              target="_blank"
+              rel="noreferrer"
+              download={attrs.sourceName}
+              className="interview-file-link"
+            >
+              Download source
+            </a>
+          ) : null}
+          <a href="https://excalidraw.com" target="_blank" rel="noreferrer" className="interview-file-link">
+            Open in Excalidraw
+          </a>
+        </Group>
+      </div>
+      <Text size="xs" c="dimmed">
+        Use “Download source” and import that file into Excalidraw to keep editing.
+      </Text>
+    </NodeViewWrapper>
+  );
+};
+
 const PrivateImageNode = Node.create({
   name: 'privateImage',
   group: 'block',
@@ -121,6 +236,9 @@ const PrivateImageNode = Node.create({
       path: { default: '' },
       name: { default: 'Image' },
       alt: { default: '' },
+      mime: { default: 'application/octet-stream' },
+      size: { default: 0 },
+      createdAt: { default: null },
       signedUrl: { default: null },
     };
   },
@@ -170,6 +288,44 @@ const AttachmentNode = Node.create({
   },
 });
 
+const DiagramNode = Node.create({
+  name: 'privateDiagram',
+  group: 'block',
+  atom: true,
+  selectable: true,
+
+  addAttributes() {
+    return {
+      id: { default: '' },
+      bucket: { default: STUDY_UPLOAD_BUCKET },
+      sourcePath: { default: '' },
+      sourceName: { default: 'diagram.excalidraw' },
+      sourceMime: { default: 'application/json' },
+      sourceSize: { default: 0 },
+      sourceCreatedAt: { default: null },
+      sourceSignedUrl: { default: null },
+      previewPath: { default: '' },
+      previewName: { default: '' },
+      previewMime: { default: '' },
+      previewSize: { default: 0 },
+      previewCreatedAt: { default: null },
+      previewSignedUrl: { default: null },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'div[data-node-type="private-diagram"]' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-node-type': 'private-diagram' })];
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(DiagramNodeView);
+  },
+});
+
 const DividerNode = Node.create({
   name: 'divider',
   group: 'block',
@@ -184,8 +340,32 @@ const DividerNode = Node.create({
   },
 });
 
-const collectAssetAttrs = (value: unknown): AssetNodeAttrs[] => {
-  const results: AssetNodeAttrs[] = [];
+const collectEntryAttachments = (value: unknown): EntryAttachment[] => {
+  const results = new Map<string, EntryAttachment>();
+
+  const addAttachment = (
+    path: string,
+    name: string,
+    fallbackId: string,
+    bucket = STUDY_UPLOAD_BUCKET,
+    mime = 'application/octet-stream',
+    size = 0,
+    createdAt?: string,
+  ) => {
+    if (!path || !name) {
+      return;
+    }
+
+    results.set(path, {
+      id: fallbackId || path,
+      name,
+      bucket,
+      path,
+      mime,
+      size,
+      created_at: createdAt || new Date().toISOString(),
+    });
+  };
 
   const walk = (node: unknown) => {
     if (!node || typeof node !== 'object') {
@@ -194,23 +374,121 @@ const collectAssetAttrs = (value: unknown): AssetNodeAttrs[] => {
 
     const current = node as Record<string, unknown>;
     const nodeType = typeof current.type === 'string' ? current.type : '';
+    const attrs = current.attrs && typeof current.attrs === 'object' ? (current.attrs as Record<string, unknown>) : null;
+
+    if (nodeType === 'privateImage' && attrs) {
+      const path = typeof attrs.path === 'string' ? attrs.path : '';
+      const name = typeof attrs.name === 'string' ? attrs.name : 'Image';
+      addAttachment(
+        path,
+        name,
+        typeof attrs.id === 'string' ? attrs.id : path,
+        typeof attrs.bucket === 'string' ? attrs.bucket : STUDY_UPLOAD_BUCKET,
+        typeof attrs.mime === 'string' ? attrs.mime : 'application/octet-stream',
+        typeof attrs.size === 'number' ? attrs.size : 0,
+        typeof attrs.createdAt === 'string' ? attrs.createdAt : undefined,
+      );
+    }
+
+    if (nodeType === 'privateAttachment' && attrs) {
+      const path = typeof attrs.path === 'string' ? attrs.path : '';
+      const name = typeof attrs.name === 'string' ? attrs.name : 'Attachment';
+      addAttachment(
+        path,
+        name,
+        typeof attrs.id === 'string' ? attrs.id : path,
+        typeof attrs.bucket === 'string' ? attrs.bucket : STUDY_UPLOAD_BUCKET,
+        typeof attrs.mime === 'string' ? attrs.mime : 'application/octet-stream',
+        typeof attrs.size === 'number' ? attrs.size : 0,
+        typeof attrs.createdAt === 'string' ? attrs.createdAt : undefined,
+      );
+    }
+
+    if (nodeType === 'privateDiagram' && attrs) {
+      const bucket = typeof attrs.bucket === 'string' ? attrs.bucket : STUDY_UPLOAD_BUCKET;
+      const sourcePath = typeof attrs.sourcePath === 'string' ? attrs.sourcePath : '';
+      const sourceName = typeof attrs.sourceName === 'string' ? attrs.sourceName : 'diagram.excalidraw';
+      addAttachment(
+        sourcePath,
+        sourceName,
+        typeof attrs.id === 'string' ? `${attrs.id}:source` : sourcePath,
+        bucket,
+        typeof attrs.sourceMime === 'string' ? attrs.sourceMime : 'application/json',
+        typeof attrs.sourceSize === 'number' ? attrs.sourceSize : 0,
+        typeof attrs.sourceCreatedAt === 'string' ? attrs.sourceCreatedAt : undefined,
+      );
+
+      const previewPath = typeof attrs.previewPath === 'string' ? attrs.previewPath : '';
+      const previewName = typeof attrs.previewName === 'string' ? attrs.previewName : '';
+      if (previewPath && previewName) {
+        addAttachment(
+          previewPath,
+          previewName,
+          typeof attrs.id === 'string' ? `${attrs.id}:preview` : previewPath,
+          bucket,
+          typeof attrs.previewMime === 'string' ? attrs.previewMime : 'application/octet-stream',
+          typeof attrs.previewSize === 'number' ? attrs.previewSize : 0,
+          typeof attrs.previewCreatedAt === 'string' ? attrs.previewCreatedAt : undefined,
+        );
+      }
+    }
+
+    if (Array.isArray(current.content)) {
+      current.content.forEach((child) => walk(child));
+    }
+  };
+
+  walk(value);
+  return Array.from(results.values());
+};
+
+const collectSignablePathRefs = (value: unknown): SignablePathRef[] => {
+  const results: SignablePathRef[] = [];
+
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') {
+      return;
+    }
+
+    const current = node as Record<string, unknown>;
+    const nodeType = typeof current.type === 'string' ? current.type : '';
+    const attrs = current.attrs && typeof current.attrs === 'object' ? (current.attrs as Record<string, unknown>) : null;
+
+    if (!attrs) {
+      if (Array.isArray(current.content)) {
+        current.content.forEach((child) => walk(child));
+      }
+      return;
+    }
 
     if (nodeType === 'privateImage' || nodeType === 'privateAttachment') {
-      const attrs = (current.attrs ?? {}) as Record<string, unknown>;
       const path = typeof attrs.path === 'string' ? attrs.path : '';
-      const name = typeof attrs.name === 'string' ? attrs.name : nodeType === 'privateImage' ? 'Image' : 'Attachment';
-
       if (path) {
         results.push({
-          id: typeof attrs.id === 'string' ? attrs.id : path,
-          bucket: typeof attrs.bucket === 'string' ? attrs.bucket : STUDY_UPLOAD_BUCKET,
+          nodeType,
           path,
-          name,
-          mime: typeof attrs.mime === 'string' ? attrs.mime : undefined,
-          size: typeof attrs.size === 'number' ? attrs.size : undefined,
-          createdAt: typeof attrs.createdAt === 'string' ? attrs.createdAt : undefined,
-          alt: typeof attrs.alt === 'string' ? attrs.alt : undefined,
-          signedUrl: typeof attrs.signedUrl === 'string' ? attrs.signedUrl : undefined,
+          urlAttr: 'signedUrl',
+        });
+      }
+    }
+
+    if (nodeType === 'privateDiagram') {
+      const sourcePath = typeof attrs.sourcePath === 'string' ? attrs.sourcePath : '';
+      const previewPath = typeof attrs.previewPath === 'string' ? attrs.previewPath : '';
+
+      if (sourcePath) {
+        results.push({
+          nodeType,
+          path: sourcePath,
+          urlAttr: 'sourceSignedUrl',
+        });
+      }
+
+      if (previewPath) {
+        results.push({
+          nodeType,
+          path: previewPath,
+          urlAttr: 'previewSignedUrl',
         });
       }
     }
@@ -241,6 +519,8 @@ const stripTransientEditorState = (value: unknown): RichContentJson => {
       if (key === 'attrs' && child && typeof child === 'object') {
         const attrs = { ...(child as Record<string, unknown>) };
         delete attrs.signedUrl;
+        delete attrs.sourceSignedUrl;
+        delete attrs.previewSignedUrl;
         next[key] = attrs;
         return;
       }
@@ -254,20 +534,11 @@ const stripTransientEditorState = (value: unknown): RichContentJson => {
   return (walk(value) as RichContentJson) ?? createEmptyRichDoc();
 };
 
-const appendParagraphText = (text: string) => ({
-  type: 'paragraph',
-  content: text
-    ? [
-        {
-          type: 'text',
-          text,
-        },
-      ]
-    : undefined,
-});
+const isDiagramSourceFile = (file: File) => /\.excalidraw$/i.test(file.name);
 
 export default function InterviewPrepEditor({
   entryId,
+  entryType,
   userId,
   value,
   attachments = [],
@@ -275,20 +546,19 @@ export default function InterviewPrepEditor({
 }: InterviewPrepEditorProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const diagramSourceInputRef = useRef<HTMLInputElement | null>(null);
+  const diagramPreviewInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentMetaRef = useRef<Map<string, EntryAttachment>>(new Map());
   const lastSerializedRef = useRef('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
-
-  useEffect(() => {
-    const nextMap = new Map<string, EntryAttachment>();
-    attachments.forEach((item) => {
-      nextMap.set(item.path, item);
-    });
-    attachmentMetaRef.current = nextMap;
-  }, [attachments]);
+  const [pendingDiagramPreviewNodeId, setPendingDiagramPreviewNodeId] = useState<string | null>(null);
 
   const initialContent = useMemo(() => value ?? createEmptyRichDoc(), [value]);
+
+  useEffect(() => {
+    attachmentMetaRef.current = new Map(attachments.map((item) => [item.path, item]));
+  }, [attachments]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -297,14 +567,18 @@ export default function InterviewPrepEditor({
         codeBlock: false,
       }),
       Placeholder.configure({
-        placeholder: 'Type "/" for insert options, or start writing your notes.',
+        placeholder:
+          entryType === 'SystemDesign'
+            ? 'Type "/" for insert options, or sketch your system design notes.'
+            : 'Type "/" for insert options, or start writing your interview notes.',
       }),
       CodeBlockLowlight.configure({
         lowlight,
-        defaultLanguage: 'plaintext',
+        defaultLanguage: 'other',
       }),
       PrivateImageNode,
       AttachmentNode,
+      DiagramNode,
       DividerNode,
     ],
     content: initialContent,
@@ -317,22 +591,9 @@ export default function InterviewPrepEditor({
       }
 
       lastSerializedRef.current = serialized;
-      const assetNodes = collectAssetAttrs(nextEditor.getJSON());
-      const nextAttachments = assetNodes.map((asset) => {
-        const existing = attachmentMetaRef.current.get(asset.path);
-        return (
-          existing ?? {
-            id: asset.id,
-            name: asset.name,
-            bucket: asset.bucket,
-            path: asset.path,
-            mime: asset.mime ?? 'application/octet-stream',
-            size: asset.size ?? 0,
-            created_at: asset.createdAt ?? new Date().toISOString(),
-          }
-        );
-      });
-
+      const nextAttachments = collectEntryAttachments(nextEditor.getJSON()).map(
+        (item) => attachmentMetaRef.current.get(item.path) ?? item,
+      );
       attachmentMetaRef.current = new Map(nextAttachments.map((item) => [item.path, item]));
       onChange(cleanDoc, nextAttachments);
       void hydrateSignedUrls(nextEditor);
@@ -362,29 +623,49 @@ export default function InterviewPrepEditor({
       return;
     }
 
-    const assetNodes = collectAssetAttrs(instance.getJSON());
-    if (assetNodes.length === 0) {
+    const signablePaths = collectSignablePathRefs(instance.getJSON());
+    if (signablePaths.length === 0) {
       return;
     }
 
+    const uniquePaths = Array.from(new Set(signablePaths.map((item) => item.path)));
     const signedUrls = await Promise.all(
-      assetNodes.map(async (asset) => ({
-        path: asset.path,
-        url: await getSignedStudyUrl(asset.path),
+      uniquePaths.map(async (path) => ({
+        path,
+        url: await getSignedStudyUrl(path),
       })),
     );
-
     const urlByPath = new Map(signedUrls.map((item) => [item.path, item.url]));
 
     instance.commands.command(({ tr, state }) => {
       let changed = false;
 
       state.doc.descendants((node, pos) => {
-        if ((node.type.name !== 'privateImage' && node.type.name !== 'privateAttachment') || !node.attrs.path) {
+        if (!['privateImage', 'privateAttachment', 'privateDiagram'].includes(node.type.name)) {
           return;
         }
 
-        const nextUrl = urlByPath.get(node.attrs.path as string);
+        if (node.type.name === 'privateDiagram') {
+          const nextSourceUrl =
+            typeof node.attrs.sourcePath === 'string' ? urlByPath.get(node.attrs.sourcePath as string) : undefined;
+          const nextPreviewUrl =
+            typeof node.attrs.previewPath === 'string' ? urlByPath.get(node.attrs.previewPath as string) : undefined;
+
+          if (
+            (nextSourceUrl && node.attrs.sourceSignedUrl !== nextSourceUrl) ||
+            (nextPreviewUrl && node.attrs.previewSignedUrl !== nextPreviewUrl)
+          ) {
+            changed = true;
+            tr.setNodeMarkup(pos, undefined, {
+              ...node.attrs,
+              sourceSignedUrl: nextSourceUrl ?? node.attrs.sourceSignedUrl ?? null,
+              previewSignedUrl: nextPreviewUrl ?? node.attrs.previewSignedUrl ?? null,
+            });
+          }
+          return;
+        }
+
+        const nextUrl = typeof node.attrs.path === 'string' ? urlByPath.get(node.attrs.path as string) : undefined;
         if (!nextUrl || node.attrs.signedUrl === nextUrl) {
           return;
         }
@@ -400,7 +681,31 @@ export default function InterviewPrepEditor({
     });
   };
 
-  const insertAtCursor = (content: Record<string, unknown>) => {
+  const updateDiagramNode = (diagramId: string, changes: Partial<DiagramNodeAttrs>) => {
+    if (!editor) {
+      return;
+    }
+
+    editor.commands.command(({ tr, state }) => {
+      let changed = false;
+
+      state.doc.descendants((node, pos) => {
+        if (node.type.name !== 'privateDiagram' || node.attrs.id !== diagramId) {
+          return;
+        }
+
+        changed = true;
+        tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          ...changes,
+        });
+      });
+
+      return changed;
+    });
+  };
+
+  const insertAtCursor = (content: Record<string, unknown> | Record<string, unknown>[]) => {
     if (!editor) {
       return;
     }
@@ -408,13 +713,10 @@ export default function InterviewPrepEditor({
     editor.chain().focus().insertContent(content).run();
   };
 
-  const insertParagraph = () => insertAtCursor(appendParagraphText(''));
-  const insertHeading = () =>
-    insertAtCursor({
-      type: 'heading',
-      attrs: { level: 2 },
-      content: [{ type: 'text', text: 'Heading' }],
-    });
+  const insertParagraph = () => insertAtCursor(createParagraphNode(''));
+
+  const insertHeading = () => insertAtCursor(createHeadingNode('Heading'));
+
   const insertBulletList = () => {
     if (!editor) {
       return;
@@ -422,6 +724,7 @@ export default function InterviewPrepEditor({
 
     editor.chain().focus().toggleBulletList().run();
   };
+
   const insertOrderedList = () => {
     if (!editor) {
       return;
@@ -429,9 +732,23 @@ export default function InterviewPrepEditor({
 
     editor.chain().focus().toggleOrderedList().run();
   };
+
   const insertDivider = () => insertAtCursor({ type: 'divider' });
 
-  const currentCodeLanguage = editor?.getAttributes('codeBlock').language || 'other';
+  const insertSystemDesignTemplate = () => {
+    if (entryType !== 'SystemDesign') {
+      return;
+    }
+
+    insertAtCursor(SYSTEM_DESIGN_TEMPLATE_NODES);
+  };
+
+  const currentCodeLanguage = editor?.isActive('codeBlock')
+    ? (() => {
+        const activeLanguage = String(editor.getAttributes('codeBlock').language || 'other');
+        return activeLanguage === 'plaintext' ? 'other' : activeLanguage;
+      })()
+    : 'other';
 
   const insertOrUpdateCodeBlock = (language: string) => {
     if (!editor) {
@@ -454,8 +771,102 @@ export default function InterviewPrepEditor({
       .run();
   };
 
-  const addUploadedAssetNode = async (file: File, kind: 'image' | 'attachment') => {
+  const insertUploadedNode = async (file: File, kind: 'image' | 'attachment') => {
     if (!userId) {
+      return;
+    }
+
+    const uploaded = await uploadStudyAsset(file, userId, entryId);
+    const signedUrl = await getSignedStudyUrl(uploaded.path);
+    insertAtCursor(
+      kind === 'image'
+        ? {
+            type: 'privateImage',
+            attrs: {
+              id: uploaded.id,
+              bucket: uploaded.bucket,
+              path: uploaded.path,
+              name: uploaded.name,
+              alt: uploaded.name,
+              mime: uploaded.mime,
+              size: uploaded.size,
+              createdAt: uploaded.created_at,
+              signedUrl,
+            },
+          }
+        : {
+            type: 'privateAttachment',
+            attrs: {
+              id: uploaded.id,
+              bucket: uploaded.bucket,
+              path: uploaded.path,
+              name: uploaded.name,
+              mime: uploaded.mime,
+              size: uploaded.size,
+              createdAt: uploaded.created_at,
+              signedUrl,
+            },
+          },
+    );
+  };
+
+  const insertDiagramSource = async (file: File, promptForPreview: boolean) => {
+    if (!userId) {
+      return;
+    }
+
+    const uploaded = await uploadStudyAsset(file, userId, entryId, { subfolder: 'diagrams' });
+    const sourceSignedUrl = await getSignedStudyUrl(uploaded.path);
+    const diagramNodeId = createUuid();
+
+    insertAtCursor({
+      type: 'privateDiagram',
+      attrs: {
+        id: diagramNodeId,
+        bucket: uploaded.bucket,
+        sourcePath: uploaded.path,
+        sourceName: uploaded.name,
+        sourceMime: uploaded.mime,
+        sourceSize: uploaded.size,
+        sourceCreatedAt: uploaded.created_at,
+        sourceSignedUrl,
+      },
+    });
+
+    if (promptForPreview && typeof window !== 'undefined') {
+      const wantsPreview = window.confirm(
+        'Upload a preview image for this diagram now? You can skip this and keep the Excalidraw source only.',
+      );
+
+      if (wantsPreview) {
+        setPendingDiagramPreviewNodeId(diagramNodeId);
+        window.setTimeout(() => {
+          diagramPreviewInputRef.current?.click();
+        }, 0);
+      }
+    }
+  };
+
+  const addDiagramPreview = async (file: File, diagramNodeId: string) => {
+    if (!userId) {
+      return;
+    }
+
+    const uploaded = await uploadStudyAsset(file, userId, entryId, { subfolder: 'diagrams' });
+    const previewSignedUrl = await getSignedStudyUrl(uploaded.path);
+
+    updateDiagramNode(diagramNodeId, {
+      previewPath: uploaded.path,
+      previewName: uploaded.name,
+      previewMime: uploaded.mime,
+      previewSize: uploaded.size,
+      previewCreatedAt: uploaded.created_at,
+      previewSignedUrl,
+    });
+  };
+
+  const handleStandardFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) {
       return;
     }
 
@@ -463,54 +874,56 @@ export default function InterviewPrepEditor({
     setIsUploading(true);
 
     try {
-      const uploaded = await uploadStudyAsset(file, userId, entryId);
-      const signedUrl = await getSignedStudyUrl(uploaded.path);
-      attachmentMetaRef.current.set(uploaded.path, uploaded);
+      for (const file of Array.from(fileList)) {
+        const kind = file.type.startsWith('image/') ? 'image' : isDiagramSourceFile(file) ? 'diagram' : 'attachment';
 
-      insertAtCursor(
-        kind === 'image'
-          ? {
-              type: 'privateImage',
-              attrs: {
-                id: uploaded.id,
-                bucket: uploaded.bucket,
-                path: uploaded.path,
-                name: uploaded.name,
-                alt: uploaded.name,
-                signedUrl,
-              },
-            }
-          : {
-              type: 'privateAttachment',
-              attrs: {
-                id: uploaded.id,
-                bucket: uploaded.bucket,
-                path: uploaded.path,
-                name: uploaded.name,
-                mime: uploaded.mime,
-                size: uploaded.size,
-                createdAt: uploaded.created_at,
-                signedUrl,
-              },
-            },
-      );
+        if (kind === 'diagram') {
+          await insertDiagramSource(file, false);
+        } else {
+          await insertUploadedNode(file, kind);
+        }
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Upload failed.');
     } finally {
       setIsUploading(false);
     }
   };
 
-  const handleFiles = async (fileList: FileList | null) => {
+  const handleDiagramSourceFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) {
       return;
     }
 
-    for (const file of Array.from(fileList)) {
-      try {
-        const kind = file.type.startsWith('image/') ? 'image' : 'attachment';
-        await addUploadedAssetNode(file, kind);
-      } catch (error) {
-        setUploadError(error instanceof Error ? error.message : 'Upload failed.');
-      }
+    setUploadError('');
+    setIsUploading(true);
+
+    try {
+      await insertDiagramSource(fileList[0], true);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Diagram upload failed.');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDiagramPreviewFiles = async (fileList: FileList | null) => {
+    const diagramNodeId = pendingDiagramPreviewNodeId;
+    setPendingDiagramPreviewNodeId(null);
+
+    if (!diagramNodeId || !fileList || fileList.length === 0) {
+      return;
+    }
+
+    setUploadError('');
+    setIsUploading(true);
+
+    try {
+      await addDiagramPreview(fileList[0], diagramNodeId);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Preview upload failed.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -523,9 +936,9 @@ export default function InterviewPrepEditor({
       <Card withBorder radius="lg" className="section-card">
         <Stack spacing="sm">
           <Group position="apart" align="center">
-            <Text fw={700}>Interview Prep Editor</Text>
+            <Text fw={700}>{entryType === 'SystemDesign' ? 'System Design Editor' : 'Interview Prep Editor'}</Text>
             <Text size="sm" c="dimmed">
-              Rich blocks, private uploads, and signed URL previews.
+              Rich text, private uploads, and signed URL previews in the drawer.
             </Text>
           </Group>
 
@@ -544,8 +957,8 @@ export default function InterviewPrepEditor({
             </Button>
             <Select
               size="xs"
-              style={{ width: 150 }}
-              data={CODE_LANGUAGE_OPTIONS}
+              style={{ width: 160 }}
+              data={RICH_CODE_LANGUAGE_OPTIONS}
               value={currentCodeLanguage}
               onChange={(value) => insertOrUpdateCodeBlock(value ?? 'other')}
             />
@@ -567,9 +980,23 @@ export default function InterviewPrepEditor({
             >
               Attachment
             </Button>
+            <Button
+              size="xs"
+              variant="light"
+              onClick={() => diagramSourceInputRef.current?.click()}
+              loading={isUploading}
+              disabled={!userId}
+            >
+              Diagram
+            </Button>
             <Button size="xs" variant="light" onClick={insertDivider}>
               Divider
             </Button>
+            {entryType === 'SystemDesign' ? (
+              <Button size="xs" variant="light" onClick={insertSystemDesignTemplate}>
+                Insert System Design Template
+              </Button>
+            ) : null}
             <Menu withinPortal position="bottom-end">
               <Menu.Target>
                 <Button size="xs" variant="subtle">
@@ -588,7 +1015,13 @@ export default function InterviewPrepEditor({
                 <Menu.Item onClick={() => fileInputRef.current?.click()} disabled={!userId}>
                   Attachment
                 </Menu.Item>
+                <Menu.Item onClick={() => diagramSourceInputRef.current?.click()} disabled={!userId}>
+                  Diagram (Excalidraw)
+                </Menu.Item>
                 <Menu.Item onClick={insertDivider}>Divider</Menu.Item>
+                {entryType === 'SystemDesign' ? (
+                  <Menu.Item onClick={insertSystemDesignTemplate}>Insert System Design Template</Menu.Item>
+                ) : null}
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -601,7 +1034,7 @@ export default function InterviewPrepEditor({
         accept="image/*"
         hidden
         onChange={(event) => {
-          void handleFiles(event.currentTarget.files);
+          void handleStandardFiles(event.currentTarget.files);
           event.currentTarget.value = '';
         }}
       />
@@ -610,7 +1043,27 @@ export default function InterviewPrepEditor({
         type="file"
         hidden
         onChange={(event) => {
-          void handleFiles(event.currentTarget.files);
+          void handleStandardFiles(event.currentTarget.files);
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        ref={diagramSourceInputRef}
+        type="file"
+        accept=".excalidraw,application/json"
+        hidden
+        onChange={(event) => {
+          void handleDiagramSourceFiles(event.currentTarget.files);
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        ref={diagramPreviewInputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => {
+          void handleDiagramPreviewFiles(event.currentTarget.files);
           event.currentTarget.value = '';
         }}
       />
@@ -622,13 +1075,13 @@ export default function InterviewPrepEditor({
         onPaste={(event) => {
           if (event.clipboardData.files.length > 0) {
             event.preventDefault();
-            void handleFiles(event.clipboardData.files);
+            void handleStandardFiles(event.clipboardData.files);
           }
         }}
         onDrop={(event) => {
           if (event.dataTransfer.files.length > 0) {
             event.preventDefault();
-            void handleFiles(event.dataTransfer.files);
+            void handleStandardFiles(event.dataTransfer.files);
           }
         }}
         onDragOver={(event) => {
@@ -640,8 +1093,8 @@ export default function InterviewPrepEditor({
         <Stack spacing="sm">
           <Text size="sm" c="dimmed">
             {userId
-              ? 'Paste or drag files directly into the editor to upload them privately to Supabase Storage.'
-              : 'Sign in with cloud sync enabled to upload private images and attachments.'}
+              ? 'Paste or drag files directly into the editor to upload them privately to Supabase Storage. Excalidraw source files should use the Diagram insert.'
+              : 'Sign in with cloud sync enabled to upload private images, diagrams, and attachments.'}
           </Text>
           {uploadError ? (
             <Text size="sm" c="danger">

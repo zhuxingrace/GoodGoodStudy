@@ -487,6 +487,19 @@ body {
   gap: 1rem;
 }
 
+.interview-diagram-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.interview-diagram-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .interview-file-link {
   color: var(--app-primary-dark);
   font-size: 0.82rem;

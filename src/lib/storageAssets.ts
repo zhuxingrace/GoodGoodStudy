@@ -18,19 +18,34 @@ const sanitizeFilename = (filename: string) =>
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '') || 'upload';
 
-export const buildStudyUploadPath = (userId: string, entryId: string, filename: string) =>
-  `${userId}/${entryId}/${createUuid()}-${sanitizeFilename(filename)}`;
+const sanitizePathSegment = (segment: string) =>
+  segment
+    .trim()
+    .replace(/[^\w.\-/]+/g, '-')
+    .replace(/\/+/g, '/')
+    .replace(/^-|-$/g, '')
+    .replace(/^\/|\/$/g, '');
+
+export const buildStudyUploadPath = (userId: string, entryId: string, filename: string, subfolder?: string) => {
+  const sanitizedSubfolder = subfolder ? sanitizePathSegment(subfolder) : '';
+  const basePrefix = sanitizedSubfolder ? `${userId}/${entryId}/${sanitizedSubfolder}` : `${userId}/${entryId}`;
+
+  return `${basePrefix}/${createUuid()}-${sanitizeFilename(filename)}`;
+};
 
 export const uploadStudyAsset = async (
   file: File,
   userId: string,
   entryId: string,
+  options?: {
+    subfolder?: string;
+  },
 ): Promise<EntryAttachment> => {
   if (!supabase) {
     throw new Error('Supabase is not configured.');
   }
 
-  const path = buildStudyUploadPath(userId, entryId, file.name);
+  const path = buildStudyUploadPath(userId, entryId, file.name, options?.subfolder);
   const { error } = await supabase.storage.from(STUDY_UPLOAD_BUCKET).upload(path, file, {
     upsert: false,
     contentType: file.type || undefined,

@@ -122,6 +122,10 @@ const normalizeCloudEntry = (value: unknown): StudyEntry | null => {
       tags: toStringArray(value.tags),
       needReview: Boolean(value.need_review),
       minutes: toPositiveInt(value.minutes, 0) || undefined,
+      contentJson:
+        (isObject(value.content_json) ? value.content_json : isObject(value.contentJson) ? value.contentJson : null) ??
+        migrateInterviewPrepBlocksToContentJson(base.blocks),
+      attachments: Array.isArray(value.attachments) ? (value.attachments as EntryAttachment[]) : [],
     };
   }
 
@@ -332,10 +336,11 @@ export const replaceCloudAppData = async (
         round_type: entry.type === 'InterviewPrep' ? entry.roundType || null : null,
         blocks: entry.blocks,
         content_json:
-          entry.type === 'InterviewPrep'
+          entry.type === 'InterviewPrep' || entry.type === 'SystemDesign'
             ? entry.contentJson ?? createEmptyRichDoc()
             : null,
-        attachments: entry.type === 'InterviewPrep' ? entry.attachments ?? [] : null,
+        attachments:
+          entry.type === 'InterviewPrep' || entry.type === 'SystemDesign' ? entry.attachments ?? [] : null,
         updated_at: timestamp,
       })),
       { onConflict: 'id' },

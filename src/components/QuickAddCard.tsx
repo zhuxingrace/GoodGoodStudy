@@ -16,7 +16,7 @@ import {
   TextInput,
 } from '@mantine/core';
 import { DIFFICULTIES, ROUND_TYPES, type EntryType, type InterviewPrepEntry, type LeetCodeEntry, type StudyEntry, type SystemDesignEntry } from '../types';
-import { addDaysISO, createEmptyEntry, insertTemplateIntoEntry } from '../lib/studyData';
+import { addDaysISO, createEmptyEntry } from '../lib/studyData';
 
 interface QuickAddCardProps {
   entryType: EntryType;
@@ -81,10 +81,6 @@ export default function QuickAddCard({
     setActiveReviewPreset(days);
   };
 
-  const insertTemplate = () => {
-    setDraft((current) => insertTemplateIntoEntry(current));
-  };
-
   const canSubmit = draft.title.trim().length > 0;
 
   const submitDraft = () => {
@@ -110,7 +106,8 @@ export default function QuickAddCard({
           <div>
             <Text fw={700}>Quick add</Text>
             <Text size="sm" c="dimmed">
-              Create the shell for a new study entry. Detailed editing continues in the drawer.
+              Create the shell for a new study entry. Rich editing, images, attachments, and diagrams happen after
+              you open the drawer.
             </Text>
           </div>
           <Badge color="sage" variant="light">
@@ -262,9 +259,6 @@ export default function QuickAddCard({
               onChange={(event) => updateSystemDesign({ needReview: event.currentTarget.checked })}
               mt={28}
             />
-            <Button variant="light" mt={26} onClick={insertTemplate}>
-              Insert SD Template
-            </Button>
           </SimpleGrid>
         ) : null}
 

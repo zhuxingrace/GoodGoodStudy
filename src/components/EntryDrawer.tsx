@@ -356,7 +356,7 @@ export default function EntryDrawer({
                   {draft.type === 'SystemDesign' ||
                   (draft.type === 'InterviewPrep' && draft.roundType === 'Coding') ? (
                     <Button variant="light" size="xs" onClick={insertTemplate}>
-                      {draft.type === 'SystemDesign' ? 'Insert SD Template' : 'Insert Coding Template'}
+                      {draft.type === 'SystemDesign' ? 'Insert System Design Template' : 'Insert Coding Template'}
                     </Button>
                   ) : null}
                   <Button variant="light" size="xs" onClick={onClose}>
@@ -519,17 +519,24 @@ export default function EntryDrawer({
             </Stack>
           </Card>
 
-          {draft.type === 'InterviewPrep' ? (
+          {draft.type === 'InterviewPrep' || draft.type === 'SystemDesign' ? (
             <InterviewPrepEditor
+              key={`${draft.type}:${draft.id}`}
               entryId={draft.id}
+              entryType={draft.type}
               userId={currentUserId}
               value={draft.contentJson}
               attachments={draft.attachments}
               onChange={(contentJson, attachments) =>
-                updateInterviewPrep({
-                  contentJson,
-                  attachments,
-                })
+                draft.type === 'InterviewPrep'
+                  ? updateInterviewPrep({
+                      contentJson,
+                      attachments,
+                    })
+                  : updateSystemDesign({
+                      contentJson,
+                      attachments,
+                    })
               }
             />
           ) : (
