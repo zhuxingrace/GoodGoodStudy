@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { Prism } from '@mantine/prism';
 import Editor from '@monaco-editor/react';
+import InterviewPrepEditor from './InterviewPrepEditor';
 import {
   createCodeBlock,
   createFollowUpBlock,
@@ -43,6 +44,7 @@ interface EntryDrawerProps {
   opened: boolean;
   companies: string[];
   tagOptions: string[];
+  currentUserId?: string;
   onClose: () => void;
   onSave: (entry: StudyEntry) => void;
 }
@@ -70,6 +72,7 @@ export default function EntryDrawer({
   opened,
   companies,
   tagOptions,
+  currentUserId,
   onClose,
   onSave,
 }: EntryDrawerProps) {
@@ -523,35 +526,50 @@ export default function EntryDrawer({
             </Stack>
           </Card>
 
-          <Card withBorder radius="lg" className="section-card">
-            <Stack spacing="md">
-              <Group position="apart">
-                <div>
-                  <Text fw={700}>Blocks</Text>
-                  <Text size="sm" c="dimmed">
-                    Add, reorder, collapse, and edit content blocks like a lightweight Notion page.
-                  </Text>
-                </div>
-                <Group spacing={8}>
-                  <Button size="xs" variant="light" onClick={() => addBlock(createTextBlock())}>
-                    Add text
-                  </Button>
-                  <Button size="xs" variant="light" onClick={() => addBlock(createCodeBlock())}>
-                    Add code
-                  </Button>
-                  <Button size="xs" variant="light" onClick={() => addBlock(createFollowUpBlock())}>
-                    Add follow-up
-                  </Button>
+          {draft.type === 'InterviewPrep' ? (
+            <InterviewPrepEditor
+              entryId={draft.id}
+              userId={currentUserId}
+              value={draft.contentJson}
+              attachments={draft.attachments}
+              onChange={(contentJson, attachments) =>
+                updateInterviewPrep({
+                  contentJson,
+                  attachments,
+                })
+              }
+            />
+          ) : (
+            <Card withBorder radius="lg" className="section-card">
+              <Stack spacing="md">
+                <Group position="apart">
+                  <div>
+                    <Text fw={700}>Blocks</Text>
+                    <Text size="sm" c="dimmed">
+                      Add, reorder, collapse, and edit content blocks like a lightweight Notion page.
+                    </Text>
+                  </div>
+                  <Group spacing={8}>
+                    <Button size="xs" variant="light" onClick={() => addBlock(createTextBlock())}>
+                      Add text
+                    </Button>
+                    <Button size="xs" variant="light" onClick={() => addBlock(createCodeBlock())}>
+                      Add code
+                    </Button>
+                    <Button size="xs" variant="light" onClick={() => addBlock(createFollowUpBlock())}>
+                      Add follow-up
+                    </Button>
+                  </Group>
                 </Group>
-              </Group>
 
-              <Divider />
+                <Divider />
 
-              <Stack spacing="sm">
-                {draft.blocks.map((block, index) => renderBlock(block, index, draft.blocks.length))}
+                <Stack spacing="sm">
+                  {draft.blocks.map((block, index) => renderBlock(block, index, draft.blocks.length))}
+                </Stack>
               </Stack>
-            </Stack>
-          </Card>
+            </Card>
+          )}
         </Stack>
       ) : null}
     </Drawer>

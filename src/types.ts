@@ -64,6 +64,17 @@ export interface FollowUpBlock {
 }
 
 export type Block = TextBlock | CodeBlock | FollowUpBlock;
+export type RichContentJson = Record<string, unknown>;
+
+export interface EntryAttachment {
+  id: string;
+  name: string;
+  bucket: string;
+  path: string;
+  mime: string;
+  size: number;
+  created_at: string;
+}
 
 export interface EntryBase {
   id: string;
@@ -101,6 +112,8 @@ export interface InterviewPrepEntry extends EntryBase {
   roundType: RoundType;
   tags: string[];
   minutes?: number;
+  contentJson?: RichContentJson | null;
+  attachments?: EntryAttachment[];
 }
 
 export type StudyEntry = LeetCodeEntry | SystemDesignEntry | InterviewPrepEntry;

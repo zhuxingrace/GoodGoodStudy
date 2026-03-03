@@ -1695,6 +1695,7 @@ export default function App() {
         opened={Boolean(editingEntry)}
         companies={companies}
         tagOptions={tagOptions}
+        currentUserId={authSession?.user.id}
         onClose={() => setEditingId(null)}
         onSave={saveEntry}
       />

@@ -10,12 +10,14 @@ import {
   type CodeLanguage,
   type Difficulty,
   type EntryType,
+  type EntryAttachment,
   type ExportPayload,
   type InterviewPrepEntry,
   type JournalEntry,
   type JournalMood,
   type LibraryFilters,
   type LeetCodeEntry,
+  type RichContentJson,
   type RoundType,
   type StudyEntry,
   type SystemDesignEntry,
@@ -109,6 +111,34 @@ const toStringArray = (value: unknown): string[] => {
     .filter((item): item is string => Boolean(item));
 };
 
+const sanitizeEntryAttachments = (value: unknown): EntryAttachment[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => isObject(item))
+    .map((item) => {
+      const path = trimString(item.path);
+      const name = trimString(item.name);
+
+      if (!path || !name) {
+        return null;
+      }
+
+      return {
+        id: trimString(item.id) ?? createUuid(),
+        name,
+        bucket: trimString(item.bucket) ?? 'study-uploads',
+        path,
+        mime: trimString(item.mime) ?? 'application/octet-stream',
+        size: toMinutes(item.size) ?? 0,
+        created_at: trimString(item.created_at) ?? new Date().toISOString(),
+      };
+    })
+    .filter((item): item is EntryAttachment => Boolean(item));
+};
+
 const toMinutes = (value: unknown): number | undefined => {
   if (typeof value !== 'number' || Number.isNaN(value) || value < 0) {
     return undefined;
@@ -197,6 +227,80 @@ export const createFollowUpBlock = (question = '', answer = ''): Block => ({
   question,
   answer,
 });
+
+export const createEmptyRichDoc = (): RichContentJson => ({
+  type: 'doc',
+  content: [
+    {
+      type: 'paragraph',
+    },
+  ],
+});
+
+const createParagraphNode = (text: string) => ({
+  type: 'paragraph',
+  content: text
+    ? [
+        {
+          type: 'text',
+          text,
+        },
+      ]
+    : undefined,
+});
+
+const createCodeBlockNode = (language: string | undefined, code: string) => ({
+  type: 'codeBlock',
+  attrs: {
+    language: language || 'other',
+  },
+  content: code
+    ? [
+        {
+          type: 'text',
+          text: code,
+        },
+      ]
+    : undefined,
+});
+
+export const migrateInterviewPrepBlocksToContentJson = (
+  blocks: Block[],
+  fallbackLanguage: CodeLanguage = 'plaintext',
+): RichContentJson => {
+  const content = blocks.flatMap((block) => {
+    if (block.type === 'text') {
+      const lines = block.content
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter((line, index, all) => line || all.length === 1 || index !== all.length - 1);
+
+      if (lines.length === 0) {
+        return [createParagraphNode('')];
+      }
+
+      return lines.map((line) => createParagraphNode(line));
+    }
+
+    if (block.type === 'code') {
+      return [createCodeBlockNode(block.language ?? fallbackLanguage, block.code)];
+    }
+
+    return [
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: block.question || 'Follow-up' }],
+      },
+      createParagraphNode(block.answer),
+    ];
+  });
+
+  return {
+    type: 'doc',
+    content: content.length > 0 ? content : createEmptyRichDoc().content,
+  };
+};
 
 export const todayISO = (date = new Date()) => {
   const year = date.getFullYear();
@@ -305,6 +409,8 @@ export const createEmptyEntry = (type: EntryType, dateISO = todayISO()): StudyEn
     company: '',
     roundType: 'Coding',
     tags: [],
+    contentJson: createEmptyRichDoc(),
+    attachments: [],
   };
 };
 
@@ -446,6 +552,11 @@ const normalizeEntry = (value: unknown): StudyEntry | null => {
     roundType: isRoundType(value.roundType) ? value.roundType : 'Coding',
     tags: toStringArray(value.tags),
     minutes: toMinutes(value.minutes),
+    contentJson:
+      isObject(value.contentJson) || isObject(value.content_json)
+        ? ((value.contentJson ?? value.content_json) as RichContentJson)
+        : migrateInterviewPrepBlocksToContentJson(base.blocks),
+    attachments: sanitizeEntryAttachments(value.attachments),
   };
   return entry;
 };
@@ -813,8 +924,69 @@ export const getCombinedText = (entry: StudyEntry) =>
 export const countBlocks = (entry: StudyEntry, type: Block['type']) =>
   entry.blocks.filter((block) => block.type === type).length;
 
+const appendTemplateToRichDoc = (contentJson: RichContentJson | null | undefined, template: string): RichContentJson => {
+  const baseDoc = contentJson && typeof contentJson === 'object' ? structuredClone(contentJson) : createEmptyRichDoc();
+  const nextContent = Array.isArray(baseDoc.content) ? [...baseDoc.content] : [];
+
+  template.split('\n').forEach((line) => {
+    nextContent.push(createParagraphNode(line));
+  });
+
+  return {
+    ...baseDoc,
+    type: 'doc',
+    content: nextContent,
+  };
+};
+
+const getRichDocSearchText = (contentJson: unknown): string => {
+  const parts: string[] = [];
+
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') {
+      return;
+    }
+
+    if (Array.isArray(node)) {
+      node.forEach((item) => walk(item));
+      return;
+    }
+
+    const current = node as Record<string, unknown>;
+
+    if (typeof current.text === 'string') {
+      parts.push(current.text);
+    }
+
+    if (current.attrs && typeof current.attrs === 'object') {
+      const attrs = current.attrs as Record<string, unknown>;
+      if (typeof attrs.name === 'string') {
+        parts.push(attrs.name);
+      }
+      if (typeof attrs.alt === 'string') {
+        parts.push(attrs.alt);
+      }
+    }
+
+    if (Array.isArray(current.content)) {
+      current.content.forEach((item) => walk(item));
+    }
+  };
+
+  walk(contentJson);
+  return parts.join(' ');
+};
+
 export const insertTemplateIntoEntry = (entry: StudyEntry): StudyEntry => {
   const template = entry.type === 'SystemDesign' ? SYSTEM_DESIGN_TEMPLATE : INTERVIEW_CODING_TEMPLATE;
+
+  if (entry.type === 'InterviewPrep') {
+    return {
+      ...entry,
+      contentJson: appendTemplateToRichDoc(entry.contentJson, template),
+    };
+  }
+
   const firstTextIndex = entry.blocks.findIndex((block) => block.type === 'text');
 
   if (firstTextIndex === -1) {
@@ -860,7 +1032,7 @@ export const entryMatchesSearch = (entry: StudyEntry, query: string) => {
   const searchParts = [entry.title, entry.link ?? '', ...getEntryTags(entry), blockText];
 
   if (entry.type === 'InterviewPrep') {
-    searchParts.push(entry.company, entry.roundType);
+    searchParts.push(entry.company, entry.roundType, getRichDocSearchText(entry.contentJson));
   }
 
   if (entry.type === 'LeetCode') {

@@ -1,9 +1,12 @@
 import { DIFFICULTIES, ENTRY_TYPES, ROUND_TYPES, type JournalEntry, type StudyEntry } from '../types';
+import type { EntryAttachment } from '../types';
 import {
+  createEmptyRichDoc,
   createCodeBlock,
   createDefaultBlocks,
   createFollowUpBlock,
   createTextBlock,
+  migrateInterviewPrepBlocksToContentJson,
   sortEntries,
   sortJournalEntries,
   todayISO,
@@ -132,6 +135,10 @@ const normalizeCloudEntry = (value: unknown): StudyEntry | null => {
         : 'Coding',
     tags: toStringArray(value.tags),
     minutes: toPositiveInt(value.minutes, 0) || undefined,
+    contentJson:
+      (isObject(value.content_json) ? value.content_json : isObject(value.contentJson) ? value.contentJson : null) ??
+      migrateInterviewPrepBlocksToContentJson(base.blocks),
+    attachments: Array.isArray(value.attachments) ? (value.attachments as EntryAttachment[]) : [],
   };
 };
 
@@ -324,6 +331,11 @@ export const replaceCloudAppData = async (
         company: entry.type === 'InterviewPrep' ? entry.company || null : null,
         round_type: entry.type === 'InterviewPrep' ? entry.roundType || null : null,
         blocks: entry.blocks,
+        content_json:
+          entry.type === 'InterviewPrep'
+            ? entry.contentJson ?? createEmptyRichDoc()
+            : null,
+        attachments: entry.type === 'InterviewPrep' ? entry.attachments ?? [] : null,
         updated_at: timestamp,
       })),
       { onConflict: 'id' },

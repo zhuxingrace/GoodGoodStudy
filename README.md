@@ -62,6 +62,12 @@ This app supports Supabase Auth + Postgres for login and per-user cloud sync.
 supabase/schema.sql
 ```
 
+For the Interview Prep rich editor + private uploads upgrade, also run:
+
+```text
+supabase/interview_prep_upgrade.sql
+```
+
 4. In Supabase Project Settings, copy:
    - Project URL
    - Anon public key
