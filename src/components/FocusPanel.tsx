@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import {
   FOCUS_SESSION_TYPES,
+  createTimeSessionId,
   getDisplayRemainingSeconds,
   getPhaseDurationSeconds,
   loadLastFocusSessionType,
@@ -568,7 +569,7 @@ export default function FocusPanel({
     const nextBreakSeconds = activeTimer.breakMinutes * 60;
 
     onSessionComplete({
-      id: `session-${endedAtMs}`,
+      id: createTimeSessionId(),
       category: activeTimer.category,
       type: selectedSessionType,
       mode: 'focus',
@@ -733,7 +734,7 @@ export default function FocusPanel({
         const startedAtMs = activeTimer.phaseStartedAtMs ?? endedAtMs - completedSeconds * 1000;
 
         onSessionComplete({
-          id: `session-${endedAtMs}`,
+          id: createTimeSessionId(),
           category: activeTimer.category,
           type: selectedSessionType,
           mode: 'focus',

@@ -1,3 +1,5 @@
+import { ensureUuid } from './id';
+
 export const TIMER_PRESET_CATEGORIES = ['LeetCode', 'SystemDesign', 'InterviewPrep'] as const;
 export const FOCUS_SESSION_TYPES = ['LeetCode', 'SystemDesign', 'InterviewPrep', 'Other'] as const;
 
@@ -159,6 +161,64 @@ export const getDisplayRemainingSeconds = (timer: ActiveTimerState, now = Date.n
   return Math.max(0, timer.durationSeconds);
 };
 
+export const sortTimeSessions = (sessions: TimeSession[]) =>
+  [...sessions].sort((left, right) => right.endAtISO.localeCompare(left.endAtISO));
+
+export const createTimeSessionId = () => ensureUuid();
+
+export const mergeTimeSessions = (current: TimeSession[], incoming: TimeSession[]) => {
+  const merged = new Map<string, TimeSession>();
+
+  sortTimeSessions(current).forEach((session) => {
+    const nextId = ensureUuid(session.id);
+    merged.set(nextId, { ...session, id: nextId });
+  });
+
+  sortTimeSessions(incoming).forEach((session) => {
+    const nextId = ensureUuid(session.id);
+
+    if (merged.has(nextId)) {
+      const duplicateId = ensureUuid();
+      merged.set(duplicateId, { ...session, id: duplicateId });
+      return;
+    }
+
+    merged.set(nextId, { ...session, id: nextId });
+  });
+
+  return sortTimeSessions(Array.from(merged.values()));
+};
+
+const normalizeTimeSession = (item: Record<string, unknown>): TimeSession => {
+  const endAtISO = trimString(item.endAtISO) ?? trimString(item.ended_at) ?? new Date().toISOString();
+  const startAtISO = trimString(item.startAtISO) ?? trimString(item.started_at) ?? new Date().toISOString();
+  const minutes = toPositiveMinutes(item.minutes, toPositiveMinutes(item.durationMinutes, 1));
+
+  return {
+    id: ensureUuid(trimString(item.id)),
+    category: trimString(item.category) ?? trimString(item.label) ?? TIMER_PRESET_CATEGORIES[0],
+    type: isFocusSessionType(item.type) ? item.type : 'Other',
+    mode: (item.mode === 'break' ? 'break' : 'focus') as TimerMode,
+    dateISO: trimString(item.dateISO) ?? trimString(item.date_iso) ?? toLocalDateISO(endAtISO),
+    minutes,
+    startAtISO,
+    endAtISO,
+    durationMinutes: minutes,
+  };
+};
+
+export const normalizeImportedTimeSessions = (value: unknown) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return sortTimeSessions(
+    value
+      .filter((item): item is Record<string, unknown> => isObject(item))
+      .map((item) => normalizeTimeSession(item)),
+  );
+};
+
 export const loadTimeSessions = (): TimeSession[] => {
   if (typeof window === 'undefined') {
     return [];
@@ -177,22 +237,7 @@ export const loadTimeSessions = (): TimeSession[] => {
 
     return parsed
       .filter((item): item is Record<string, unknown> => isObject(item))
-      .map((item) => {
-        const endAtISO = trimString(item.endAtISO) ?? new Date().toISOString();
-        const minutes = toPositiveMinutes(item.minutes, toPositiveMinutes(item.durationMinutes, 1));
-
-        return {
-          id: trimString(item.id) ?? `session-${Date.now()}`,
-          category: trimString(item.category) ?? TIMER_PRESET_CATEGORIES[0],
-          type: isFocusSessionType(item.type) ? item.type : 'Other',
-          mode: (item.mode === 'break' ? 'break' : 'focus') as TimerMode,
-          dateISO: trimString(item.dateISO) ?? toLocalDateISO(endAtISO),
-          minutes,
-          startAtISO: trimString(item.startAtISO) ?? new Date().toISOString(),
-          endAtISO,
-          durationMinutes: minutes,
-        };
-      })
+      .map((item) => normalizeTimeSession(item))
       .sort((left, right) => right.endAtISO.localeCompare(left.endAtISO));
   } catch {
     return [];
@@ -206,8 +251,16 @@ export const saveTimeSessions = (sessions: TimeSession[]) => {
 
   window.localStorage.setItem(
     TIME_SESSIONS_KEY,
-    JSON.stringify([...sessions].sort((left, right) => right.endAtISO.localeCompare(left.endAtISO))),
+    JSON.stringify(sortTimeSessions(sessions)),
   );
+};
+
+export const clearLocalTimeSessions = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(TIME_SESSIONS_KEY, JSON.stringify([]));
 };
 
 export const loadLastFocusSessionType = (): FocusSessionType => {

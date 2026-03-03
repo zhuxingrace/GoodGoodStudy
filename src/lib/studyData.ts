@@ -21,6 +21,8 @@ import {
   type SystemDesignEntry,
   type TextBlock,
 } from '../types';
+import { createUuid } from './id';
+import { normalizeImportedTimeSessions, type TimeSession } from './timeTracker';
 
 const STORAGE_KEY = 'study-tracker.entries.v1';
 const JOURNAL_STORAGE_KEY = 'study-tracker.journal.v1';
@@ -173,11 +175,7 @@ const normalizeCodeLanguage = (value: unknown, fallback: CodeLanguage = 'java'):
 };
 
 export const createId = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-
-  return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return createUuid();
 };
 
 export const createTextBlock = (content = ''): TextBlock => ({
@@ -619,6 +617,34 @@ export const loadEntries = (): StudyEntry[] => {
   return seeded;
 };
 
+export const loadExistingLocalEntries = (): StudyEntry[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  const raw = window.localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const candidateEntries = Array.isArray(parsed)
+      ? parsed
+      : isObject(parsed) && Array.isArray(parsed.entries)
+        ? parsed.entries
+        : [];
+
+    return sortEntries(
+      candidateEntries
+        .map((item) => normalizeEntry(item))
+        .filter((item): item is StudyEntry => Boolean(item)),
+    );
+  } catch {
+    return [];
+  }
+};
+
 export const loadJournalEntries = (): JournalEntry[] => {
   if (typeof window === 'undefined') {
     return [];
@@ -663,11 +689,32 @@ export const saveJournalEntries = (journalEntries: JournalEntry[]) => {
   window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify(sortJournalEntries(journalEntries)));
 };
 
-export const buildExportPayload = (entries: StudyEntry[], journalEntries: JournalEntry[] = []): ExportPayload => ({
+export const clearLocalEntries = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+};
+
+export const clearLocalJournalEntries = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(JOURNAL_STORAGE_KEY, JSON.stringify([]));
+};
+
+export const buildExportPayload = (
+  entries: StudyEntry[],
+  journalEntries: JournalEntry[] = [],
+  timeSessions: TimeSession[] = [],
+): ExportPayload => ({
   version: EXPORT_VERSION,
   exportedAt: new Date().toISOString(),
   entries: sortEntries(entries),
   journalEntries: sortJournalEntries(journalEntries),
+  timeSessions: [...timeSessions].sort((left, right) => right.endAtISO.localeCompare(left.endAtISO)),
 });
 
 export const parseImportBundle = (raw: string) => {
@@ -695,9 +742,12 @@ export const parseImportBundle = (raw: string) => {
     .map((item) => normalizeJournalEntry(item))
     .filter((item): item is JournalEntry => Boolean(item));
 
+  const timeSessionSource = isObject(parsed) ? parsed.timeSessions : [];
+
   return {
     entries: sortEntries(entries),
     journalEntries: sortJournalEntries(journalEntries),
+    timeSessions: normalizeImportedTimeSessions(timeSessionSource),
   };
 };
 

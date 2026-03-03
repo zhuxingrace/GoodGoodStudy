@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   Accordion,
   Anchor,
@@ -21,6 +22,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
+import AuthScreen from './components/AuthScreen';
 import BackupReminder from './components/BackupReminder';
 import EntryCard from './components/EntryCard';
 import EntryDrawer from './components/EntryDrawer';
@@ -32,6 +34,8 @@ import SettingsPanel from './components/SettingsPanel';
 import StatsPanel from './components/StatsPanel';
 import {
   buildExportPayload,
+  clearLocalEntries,
+  clearLocalJournalEntries,
   collectCompanies,
   collectTags,
   duplicateStudyEntry,
@@ -39,6 +43,7 @@ import {
   formatDateLabel,
   getEntryTags,
   hasJournalText,
+  loadExistingLocalEntries,
   loadEntries,
   loadJournalEntries,
   mergeJournalEntries,
@@ -52,6 +57,7 @@ import {
   toggleReview,
   todayISO,
 } from './lib/studyData';
+import { loadCloudAppData, replaceCloudAppData } from './lib/cloudData';
 import {
   dismissBackupReminder,
   formatDateTimeLabel,
@@ -71,28 +77,34 @@ import {
 } from './lib/persistence';
 import {
   TIMER_PRESET_CATEGORIES,
+  clearLocalTimeSessions,
   ensureTimerCategories,
   loadActiveTimerState,
   loadTimeSessions,
   loadTimerCategories,
+  mergeTimeSessions,
   saveActiveTimerState,
   saveTimeSessions,
   saveTimerCategories,
+  sortTimeSessions,
   type ActiveTimerState,
   type TimeSession,
 } from './lib/timeTracker';
+import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { ENTRY_TYPES, type EntryType, type JournalEntry, type LibraryFilters as LibraryFiltersShape, type StudyEntry } from './types';
 
 type PageKey = 'Today' | 'Focus' | 'Library' | 'Journal' | 'Stats' | 'Settings';
 type LibraryViewMode = 'grouped' | 'table';
 type LibrarySortMode = 'date' | 'type';
 type NavItemId = 'today' | 'focus' | 'library' | 'journal' | 'stats' | 'settings';
+type DataSyncMode = 'cloud' | 'local';
 type HashRoute = {
   page: PageKey;
   journalDateISO?: string;
 };
 
 const NAV_ORDER_STORAGE_KEY = 'study-tracker.nav-order.v1';
+const DATA_SYNC_MODE_STORAGE_KEY = 'study-tracker.data-sync-mode.v1';
 
 const NAV_ITEMS: Array<{ id: NavItemId; key: PageKey; label: string; icon: string }> = [
   { id: 'today', key: 'Today', label: 'Today', icon: '📅' },
@@ -165,6 +177,14 @@ const loadNavOrder = (): NavItemId[] => {
   }
 };
 
+const loadDataSyncMode = (): DataSyncMode => {
+  if (typeof window === 'undefined') {
+    return 'cloud';
+  }
+
+  return window.localStorage.getItem(DATA_SYNC_MODE_STORAGE_KEY) === 'local' ? 'local' : 'cloud';
+};
+
 const isValidDateISO = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 const parseHashRoute = (hash: string): HashRoute => {
@@ -216,6 +236,12 @@ const defaultFilters: LibraryFiltersShape = {
 export default function App() {
   const [entries, setEntries] = useState<StudyEntry[]>([]);
   const [isReady, setIsReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(() => !isSupabaseConfigured);
+  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const [authError, setAuthError] = useState('');
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [dataSyncMode, setDataSyncMode] = useState<DataSyncMode>(() => loadDataSyncMode());
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [activePage, setActivePage] = useState<PageKey>(() => getCurrentHashRoute().page);
   const [todayType, setTodayType] = useState<EntryType>('LeetCode');
   const [filters, setFilters] = useState<LibraryFiltersShape>(defaultFilters);
@@ -242,8 +268,58 @@ export default function App() {
     loadActiveTimerState(loadTimerCategories()),
   );
   const [timerNowMs, setTimerNowMs] = useState(() => Date.now());
+  const skipNextCloudPersistRef = useRef(false);
 
   const fileStorageSupported = supportsFileStorage();
+  const canUseCloudSync = Boolean(isSupabaseConfigured && authSession);
+  const isCloudMode = canUseCloudSync && dataSyncMode === 'cloud';
+
+  useEffect(() => {
+    if (!supabase) {
+      setIsAuthReady(true);
+      return;
+    }
+
+    let active = true;
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) {
+        return;
+      }
+
+      if (error) {
+        setAuthError(error.message);
+      }
+
+      setAuthSession(data.session ?? null);
+      setIsAuthReady(true);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) {
+        return;
+      }
+
+      setAuthSession(session);
+      setIsAuthReady(true);
+      setAuthError('');
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(DATA_SYNC_MODE_STORAGE_KEY, dataSyncMode);
+  }, [dataSyncMode]);
 
   useEffect(() => {
     let active = true;
@@ -315,7 +391,59 @@ export default function App() {
   }, [fileStorageSupported]);
 
   useEffect(() => {
-    if (!isReady) {
+    if (!isAuthReady) {
+      return;
+    }
+
+    if (!isCloudMode || !authSession) {
+      setIsCloudLoading(false);
+      return;
+    }
+
+    let active = true;
+    setIsCloudLoading(true);
+    setStorageStatus('Loading your Supabase data...');
+
+    const loadCloudState = async () => {
+      try {
+        const cloudData = await loadCloudAppData(authSession.user.id);
+
+        if (!active) {
+          return;
+        }
+
+        skipNextCloudPersistRef.current = true;
+        setEntries(cloudData.entries);
+        setJournalEntries(cloudData.journalEntries);
+        setTimeSessions(cloudData.timeSessions);
+        setStorageStatus('Using Supabase cloud sync.');
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setDataSyncMode('local');
+        setStorageStatus(
+          error instanceof Error
+            ? `${error.message} Falling back to local mode.`
+            : 'Supabase sync failed. Falling back to local mode.',
+        );
+      } finally {
+        if (active) {
+          setIsCloudLoading(false);
+        }
+      }
+    };
+
+    void loadCloudState();
+
+    return () => {
+      active = false;
+    };
+  }, [authSession, isAuthReady, isCloudMode]);
+
+  useEffect(() => {
+    if (!isReady || isCloudMode || isCloudLoading) {
       return;
     }
 
@@ -358,7 +486,69 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [entries, fileHandle, isReady, journalEntries, storageMode]);
+  }, [entries, fileHandle, isCloudLoading, isCloudMode, isReady, journalEntries, storageMode]);
+
+  useEffect(() => {
+    if (!isReady || !isCloudMode || !authSession || isCloudLoading) {
+      return;
+    }
+
+    if (skipNextCloudPersistRef.current) {
+      skipNextCloudPersistRef.current = false;
+      return;
+    }
+
+    let active = true;
+
+    const persistCloudState = async () => {
+      persistLastUsedCodeLanguage(entries);
+
+      try {
+        const syncedData = await replaceCloudAppData(authSession.user.id, {
+          entries,
+          journalEntries,
+          timeSessions,
+        });
+
+        if (!active) {
+          return;
+        }
+
+        setStorageStatus('Using Supabase cloud sync.');
+
+        const entryIdsChanged =
+          syncedData.entries.length !== entries.length ||
+          syncedData.entries.some((entry, index) => entry.id !== entries[index]?.id);
+        const sessionIdsChanged =
+          syncedData.timeSessions.length !== timeSessions.length ||
+          syncedData.timeSessions.some((session, index) => session.id !== timeSessions[index]?.id);
+
+        if (entryIdsChanged) {
+          setEntries(syncedData.entries);
+        }
+
+        if (sessionIdsChanged) {
+          setTimeSessions(syncedData.timeSessions);
+        }
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+
+        setStorageStatus(
+          error instanceof Error
+            ? `${error.message} Your latest changes remain in memory.`
+            : 'Supabase sync failed. Your latest changes remain in memory.',
+        );
+      }
+    };
+
+    void persistCloudState();
+
+    return () => {
+      active = false;
+    };
+  }, [authSession, entries, isCloudLoading, isCloudMode, isReady, journalEntries, timeSessions]);
 
   useEffect(() => {
     if (editingId && !entries.some((entry) => entry.id === editingId)) {
@@ -367,8 +557,12 @@ export default function App() {
   }, [editingId, entries]);
 
   useEffect(() => {
+    if (isCloudMode) {
+      return;
+    }
+
     saveTimeSessions(timeSessions);
-  }, [timeSessions]);
+  }, [isCloudMode, timeSessions]);
 
   useEffect(() => {
     saveTimerCategories(timerCategories);
@@ -452,10 +646,14 @@ export default function App() {
   const today = todayISO();
   const lastBackupLabel = formatDateTimeLabel(persistenceMeta.lastBackupAt);
   const backupReminderVisible = shouldShowBackupReminder(persistenceMeta);
-  const storageBadgeLabel =
-    storageMode === 'file' ? (fileHandle ? 'File mode' : 'File fallback') : 'LocalStorage';
-  const storageSummary =
-    storageMode === 'file' && fileHandle
+  const storageBadgeLabel = isCloudMode
+    ? 'Cloud sync'
+    : storageMode === 'file'
+      ? (fileHandle ? 'File mode' : 'File fallback')
+      : 'Local';
+  const storageSummary = isCloudMode
+    ? 'Main data syncs to your Supabase account'
+    : storageMode === 'file' && fileHandle
       ? 'Main data is stored in your chosen JSON file'
       : 'Main data is stored in this browser';
 
@@ -508,9 +706,137 @@ export default function App() {
   const selectedJournalEntry =
     journalEntries.find((entry) => entry.dateISO === selectedJournalDateISO) ?? null;
 
-  const replaceAppData = (nextEntries: StudyEntry[], nextJournalEntries: JournalEntry[] = []) => {
+  const replaceAppData = (
+    nextEntries: StudyEntry[],
+    nextJournalEntries: JournalEntry[] = [],
+    nextTimeSessions: TimeSession[] = timeSessions,
+  ) => {
     setEntries(sortEntries(nextEntries));
     setJournalEntries(nextJournalEntries);
+    setTimeSessions(sortTimeSessions(nextTimeSessions));
+  };
+
+  const handleLogin = async (email: string, password: string) => {
+    if (!supabase) {
+      setAuthError('Supabase env vars are missing.');
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthError('');
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    setIsAuthSubmitting(false);
+
+    if (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleSignUp = async (email: string, password: string) => {
+    if (!supabase) {
+      setAuthError('Supabase env vars are missing.');
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthError('');
+
+    const { error } = await supabase.auth.signUp({ email, password });
+
+    setIsAuthSubmitting(false);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setStorageStatus('Check your email to confirm the new account, then log in.');
+  };
+
+  const handleGoogleLogin = async () => {
+    if (!supabase || typeof window === 'undefined') {
+      setAuthError('Supabase env vars are missing.');
+      return;
+    }
+
+    setIsAuthSubmitting(true);
+    setAuthError('');
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.href,
+      },
+    });
+
+    setIsAuthSubmitting(false);
+
+    if (error) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setDataSyncMode('cloud');
+  };
+
+  const handleCloudModeChange = (enabled: boolean) => {
+    setDataSyncMode(enabled ? 'cloud' : 'local');
+    setStorageStatus(
+      enabled
+        ? 'Loading your Supabase data...'
+        : storageMode === 'file'
+          ? 'Cloud sync disabled. Local file mode is active.'
+          : 'Cloud sync disabled. Using browser localStorage.',
+    );
+  };
+
+  const importLocalDataToCloud = () => {
+    if (!authSession) {
+      return;
+    }
+
+    modals.openConfirmModal({
+      title: 'Import local data into cloud?',
+      centered: true,
+      labels: { confirm: 'Import to cloud', cancel: 'Cancel' },
+      confirmProps: { color: 'sage' },
+      onConfirm: async () => {
+        const mergedEntries = mergeEntries(entries, loadExistingLocalEntries());
+        const mergedJournalEntries = mergeJournalEntries(journalEntries, loadJournalEntries());
+        const mergedTimeSessions = mergeTimeSessions(timeSessions, loadTimeSessions());
+
+        setStorageStatus('Uploading your local data to Supabase...');
+
+        try {
+          const syncedData = await replaceCloudAppData(authSession.user.id, {
+            entries: mergedEntries,
+            journalEntries: mergedJournalEntries,
+            timeSessions: mergedTimeSessions,
+          });
+
+          skipNextCloudPersistRef.current = true;
+          replaceAppData(syncedData.entries, syncedData.journalEntries, syncedData.timeSessions);
+          clearLocalEntries();
+          clearLocalJournalEntries();
+          clearLocalTimeSessions();
+          setStorageStatus('Local data was imported into Supabase and then cleared from localStorage.');
+        } catch (error) {
+          setStorageStatus(
+            error instanceof Error
+              ? error.message
+              : 'Unable to import local data into Supabase right now.',
+          );
+        }
+      },
+    });
   };
 
   const navigateToPage = (page: PageKey, options?: { journalDateISO?: string }) => {
@@ -602,7 +928,7 @@ export default function App() {
   };
 
   const exportData = () => {
-    const payload = buildExportPayload(entries, journalEntries);
+    const payload = buildExportPayload(entries, journalEntries, timeSessions);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -686,6 +1012,7 @@ export default function App() {
     const incoming = parseImportBundle(raw);
     setEntries((current) => mergeEntries(current, incoming.entries));
     setJournalEntries((current) => mergeJournalEntries(current, incoming.journalEntries));
+    setTimeSessions((current) => mergeTimeSessions(current, incoming.timeSessions ?? []));
   };
 
   const importReplace = (raw: string) => {
@@ -695,7 +1022,7 @@ export default function App() {
       centered: true,
       labels: { confirm: 'Replace', cancel: 'Cancel' },
       confirmProps: { color: 'danger' },
-      onConfirm: () => replaceAppData(incoming.entries, incoming.journalEntries),
+      onConfirm: () => replaceAppData(incoming.entries, incoming.journalEntries, incoming.timeSessions ?? []),
     });
   };
 
@@ -705,7 +1032,7 @@ export default function App() {
       centered: true,
       labels: { confirm: 'Clear', cancel: 'Cancel' },
       confirmProps: { color: 'danger' },
-      onConfirm: () => replaceAppData([], []),
+      onConfirm: () => replaceAppData([], [], []),
     });
   };
 
@@ -732,9 +1059,7 @@ export default function App() {
   };
 
   const appendTimeSession = (session: TimeSession) => {
-    setTimeSessions((current) =>
-      [session, ...current].sort((left, right) => right.endAtISO.localeCompare(left.endAtISO)),
-    );
+    setTimeSessions((current) => sortTimeSessions([session, ...current]));
   };
 
   const addTimerCategory = (name: string) => {
@@ -1123,6 +1448,11 @@ export default function App() {
       {isReady ? (
         <SettingsPanel
           entryCount={entries.length}
+          cloudAvailable={isSupabaseConfigured}
+          canUseCloud={canUseCloudSync}
+          cloudModeEnabled={isCloudMode}
+          cloudStatus={storageStatus}
+          authEmail={authSession?.user.email}
           storageMode={storageMode}
           fileStorageSupported={fileStorageSupported}
           hasConnectedFile={Boolean(fileHandle)}
@@ -1130,6 +1460,9 @@ export default function App() {
           lastBackupLabel={lastBackupLabel}
           timerCategories={timerCategories}
           onQuickExport={exportData}
+          onCloudModeChange={handleCloudModeChange}
+          onImportLocalToCloud={importLocalDataToCloud}
+          onLogout={() => void handleLogout()}
           onChooseDataFile={chooseDataFile}
           onStorageModeChange={handleStorageModeChange}
           onImportMerge={importMerge}
@@ -1167,6 +1500,31 @@ export default function App() {
 
     return renderSettingsPage();
   };
+
+  if (isSupabaseConfigured && !isAuthReady) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1.5rem' }}>
+        <Card withBorder radius="xl" shadow="sm" className="section-card">
+          <Text size="sm" c="dimmed">
+            Connecting to Supabase...
+          </Text>
+        </Card>
+      </div>
+    );
+  }
+
+  if (isSupabaseConfigured && !authSession) {
+    return (
+      <AuthScreen
+        isLoading={isAuthSubmitting}
+        isSupabaseConfigured={isSupabaseConfigured}
+        authError={authError}
+        onLogin={handleLogin}
+        onSignUp={handleSignUp}
+        onGoogleLogin={handleGoogleLogin}
+      />
+    );
+  }
 
   return (
     <>
@@ -1299,6 +1657,11 @@ export default function App() {
                   {entries.length} total entries
                 </Text>
                 <Text fw={600}>{storageSummary}</Text>
+                {authSession ? (
+                  <Button mt="sm" size="xs" variant="subtle" color="gray" onClick={() => void handleLogout()}>
+                    Log out
+                  </Button>
+                ) : null}
               </Card>
             </Navbar.Section>
           </Navbar>

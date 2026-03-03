@@ -5,6 +5,11 @@ import { TIMER_PRESET_CATEGORIES } from '../lib/timeTracker';
 
 interface SettingsPanelProps {
   entryCount: number;
+  cloudAvailable: boolean;
+  canUseCloud: boolean;
+  cloudModeEnabled: boolean;
+  cloudStatus: string;
+  authEmail?: string;
   storageMode: StorageMode;
   fileStorageSupported: boolean;
   hasConnectedFile: boolean;
@@ -12,6 +17,9 @@ interface SettingsPanelProps {
   lastBackupLabel: string;
   timerCategories: string[];
   onQuickExport: () => void;
+  onCloudModeChange: (enabled: boolean) => void;
+  onImportLocalToCloud: () => void;
+  onLogout: () => void;
   onChooseDataFile: () => void;
   onStorageModeChange: (enabled: boolean) => void;
   onImportMerge: (raw: string) => void;
@@ -23,6 +31,11 @@ interface SettingsPanelProps {
 
 export default function SettingsPanel({
   entryCount,
+  cloudAvailable,
+  canUseCloud,
+  cloudModeEnabled,
+  cloudStatus,
+  authEmail,
   storageMode,
   fileStorageSupported,
   hasConnectedFile,
@@ -30,6 +43,9 @@ export default function SettingsPanel({
   lastBackupLabel,
   timerCategories,
   onQuickExport,
+  onCloudModeChange,
+  onImportLocalToCloud,
+  onLogout,
   onChooseDataFile,
   onStorageModeChange,
   onImportMerge,
@@ -93,6 +109,44 @@ export default function SettingsPanel({
   return (
     <Stack spacing="md">
       <Card withBorder radius="lg" shadow="sm" className="section-card">
+        <Text fw={700}>Account and sync</Text>
+        <Text size="sm" c="dimmed" mt={4}>
+          {cloudAvailable
+            ? canUseCloud
+              ? `Signed in as ${authEmail ?? 'your account'}.`
+              : 'Sign in to enable Supabase sync.'
+            : 'Supabase env vars are not set, so the app is running in local-only mode.'}
+        </Text>
+
+        {cloudAvailable ? (
+          <>
+            <Switch
+              mt="md"
+              label="Use Supabase cloud sync"
+              checked={cloudModeEnabled}
+              disabled={!canUseCloud}
+              onChange={(event) => onCloudModeChange(event.currentTarget.checked)}
+            />
+
+            <Group mt="md">
+              <Button variant="light" onClick={onImportLocalToCloud} disabled={!canUseCloud || !cloudModeEnabled}>
+                Import my local data into cloud
+              </Button>
+              {canUseCloud ? (
+                <Button variant="subtle" color="gray" onClick={onLogout}>
+                  Log out
+                </Button>
+              ) : null}
+            </Group>
+          </>
+        ) : null}
+
+        <Text size="sm" c="dimmed" mt="sm">
+          {cloudStatus}
+        </Text>
+      </Card>
+
+      <Card withBorder radius="lg" shadow="sm" className="section-card">
         <Text fw={700}>Backups</Text>
         <Text size="sm" c="dimmed" mt={4}>
           {entryCount} entries tracked. Last backup: {lastBackupLabel}.
@@ -152,7 +206,7 @@ export default function SettingsPanel({
       <Card withBorder radius="lg" shadow="sm" className="section-card">
         <Text fw={700}>Storage mode</Text>
         <Text size="sm" c="dimmed" mt={4}>
-          LocalStorage stays the default. File mode writes your data into a chosen JSON file instead.
+          Local mode stores data in this browser. File mode writes local data into a chosen JSON file instead.
         </Text>
 
         <Switch

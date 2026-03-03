@@ -129,4 +129,15 @@ export interface ExportPayload {
   exportedAt: string;
   entries: StudyEntry[];
   journalEntries?: JournalEntry[];
+  timeSessions?: Array<{
+    id: string;
+    category: string;
+    type: 'LeetCode' | 'SystemDesign' | 'InterviewPrep' | 'Other';
+    mode: 'focus' | 'break';
+    dateISO: string;
+    minutes: number;
+    startAtISO: string;
+    endAtISO: string;
+    durationMinutes: number;
+  }>;
 }

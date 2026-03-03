@@ -48,6 +48,44 @@ This app builds as a static site and uses hash-based URLs (for example, `#/focus
 
 Because navigation is hash-based, refreshing on routes like `#/focus`, `#/library`, or `#/settings` will not 404 on static hosting.
 
+## Supabase setup
+
+This app supports Supabase Auth + Postgres for login and per-user cloud sync.
+
+1. Create a new Supabase project.
+2. In Supabase Auth, enable:
+   - Email/password
+   - Google (optional)
+3. In the Supabase SQL editor, run the schema in:
+
+```text
+supabase/schema.sql
+```
+
+4. In Supabase Project Settings, copy:
+   - Project URL
+   - Anon public key
+5. Create a local `.env` file (not committed) with:
+
+```bash
+VITE_SUPABASE_URL=your-project-url
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+When these env vars are present, the app shows a login screen and uses Supabase cloud sync by default after sign-in. If they are missing, the app falls back to local-only mode.
+
+## Vercel env vars
+
+When deploying to Vercel, set the same environment variables in the project settings:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+Then deploy with:
+
+- Build command: `npm run build`
+- Output directory: `dist`
+
 ## Share with a friend
 
 To let someone else run the app on their machine:
